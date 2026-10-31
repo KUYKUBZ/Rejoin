@@ -36,40 +36,38 @@ while true; do
 
         if [ -n "$url" ]; then
           am start -a android.intent.action.VIEW \
-            -d "$url" \
-            -p "$package"
+            -d "$url" -p "$package"
         else
           am start -a android.intent.action.MAIN \
             -c android.intent.category.LAUNCHER \
             -p "$package"
         fi
 
-        clear
         sleep 10
+        clear
       done
 
       echo "เริ่มตรวจสอบ Roblox..."
-      echo "กด CTRL+C เพื่อหยุดตรวจสอบ"
+      echo "ตรวจสอบทุก 5 วินาที"
+      echo "กด CTRL+C เพื่อหยุด"
 
       while true; do
-        running=0
+        echo "-----------------"
+        echo "กำลังตรวจสอบ Task..."
 
-        for package in $packages; do
-          if pidof "$package" >/dev/null 2>&1; then
-            running=1
-            break
-          fi
-        done
+        tasks=$(/system/bin/dumpsys activity recents |
+          grep -E 'Recent #[0-9]+: TaskRecord.*com\.roblox')
 
-        if [ "$running" -eq 0 ]; then
-          echo "Roblox ปิดหรือหยุดทำงานแล้ว!"
-          break
+        if [ -z "$tasks" ]; then
+          echo "ไม่พบ Roblox ใน Recent Tasks"
+        else
+          echo "$tasks"
         fi
 
+        echo "-----------------"
         sleep 5
+        clear
       done
-
-      read -p "กด Enter เพื่อกลับเมนู..."
       ;;
 
     2)
