@@ -158,7 +158,7 @@ while true; do
 
             for package in $packages; do
                 if [ -n "$url" ]; then
-                    open_package "$url" "$package"
+                    open_package "$package" "$url"
                 fi
                 sleep 20
             done
