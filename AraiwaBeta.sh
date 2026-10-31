@@ -3,22 +3,37 @@
 
 AUTO="/storage/emulated/0/Delta/Autoexecute"
 CONFIG="$HOME/.rejoin_link"
-STATUS="$HOME/status.txt"
+STATUS_DIR="$HOME/game_status"
+
+mkdir -p "$STATUS_DIR"
+
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+YELLOW='\033[1;33m'
+RESET='\033[0m'
 
 get_packages() {
-    pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
+    pm list packages |
+        grep -Ei 'roblox|delt' |
+        sed 's/package://'
+}
+
+status_file() {
+    echo "$STATUS_DIR/$1.txt"
 }
 
 check_game() {
-    if [ ! -f "$STATUS" ]; then
+    local file
+    file=$(status_file "$1")
+
+    if [ ! -f "$file" ]; then
         echo "NOT_IN_GAME"
         return
     fi
 
     local status timestamp now
-
-    status=$(head -n 1 "$STATUS")
-    timestamp=$(tail -n 1 "$STATUS")
+    status=$(head -n 1 "$file")
+    timestamp=$(tail -n 1 "$file")
     now=$(date +%s)
 
     if [[ "$status" == "IN_GAME" ]] &&
@@ -27,6 +42,22 @@ check_game() {
         echo "IN_GAME"
     else
         echo "NOT_IN_GAME"
+    fi
+}
+
+open_app() {
+    local package="$1"
+    local url="$2"
+
+    echo "Opening $package"
+
+    if [ -n "$url" ]; then
+        am start -a android.intent.action.VIEW \
+            -d "$url" -p "$package"
+    else
+        am start -a android.intent.action.MAIN \
+            -c android.intent.category.LAUNCHER \
+            -p "$package"
     fi
 }
 
@@ -56,113 +87,33 @@ LUA
     echo "Created: $AUTO/api.lua"
 }
 
-open_apps() {
-    local packages="$1"
-    local url="$2"
-
-    for package in $packages; do
-        echo "Opening: $package"
-
-        if [ -n "$url" ]; then
-            am start -a android.intent.action.VIEW \
-                -d "$url" -p "$package"
-        else
-            am start -a android.intent.action.MAIN \
-                -c android.intent.category.LAUNCHER \
-                -p "$package"
-        fi
-
-        sleep 20
-    done
-}
-
 while true; do
     clear
+    echo -e "${CYAN}===== ARIWAA =====${RESET}"
+    echo "[1] Open Roblox apps"
+    echo "[2] Set Game Link"
+    echo "[3] Setup Executor"
+    echo "[4] Check each app"
+    echo "[5] Monitor each app"
+    echo "[6] Exit"
 
-    CYAN='\033[1;36m'
-    WHITE='\033[1;37m'
-    YELLOW='\033[1;33m'
-    RESET='\033[0m'
-
-    WIDTH=$(tput cols 2>/dev/null)
-    [[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
-    [ "$WIDTH" -lt 10 ] && WIDTH=10
-    [ "$WIDTH" -gt 50 ] && WIDTH=50
-
-    INNER=$((WIDTH - 2))
-
-    border() {
-        printf "${CYAN}+"
-        printf '%*s' "$INNER" '' | tr ' ' '-'
-        printf "+${RESET}\n"
-    }
-
-    line() {
-        printf "${CYAN}|${RESET}"
-        printf "%-*.*s" "$INNER" "$INNER" "$1"
-        printf "${CYAN}|${RESET}\n"
-    }
-
-    border
-    line "       A r i w a a"
-    border
-    line ""
-    line " [1] Open Roblox"
-    line " [2] Set Game Link"
-    line " [3] Setup Executor"
-    line " [4] Check Game Status"
-    line " [5] Exit"
-    line ""
-    border
-
-    printf "\n${YELLOW}Select: ${WHITE}"
-    read -r choice
+    read -r -p "Select: " choice
 
     case "$choice" in
         1)
             packages=$(get_packages)
-
-            if [ -z "$packages" ]; then
-                echo "No Roblox apps found."
-                read -r -p "Press Enter..."
-                continue
-            fi
-
             url=""
             [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
-            open_apps "$packages" "$url"
-
-            failures=0
-
-            while true; do
-                clear
-                echo "===== GAME STATUS ====="
-
-                status=$(check_game)
-                echo "$status"
-
-                if [ "$status" = "IN_GAME" ]; then
-                    failures=0
-                else
-                    failures=$((failures + 1))
-                    echo "Checking... $failures/10"
-                fi
-
-                if [ "$failures" -ge 10 ]; then
-                    echo
-                    echo "Game disconnected!"
-                    echo "Opening Roblox again..."
-
-                    open_apps "$packages" "$url"
-
-                    failures=0
-                fi
-
-                echo
-                echo "Press CTRL+C to stop monitoring"
-                sleep 3
-            done
+            if [ -z "$packages" ]; then
+                echo "No apps found."
+            else
+                for package in $packages; do
+                    open_app "$package" "$url"
+                    sleep 20
+                done
+            fi
+            read -r -p "Press Enter..."
             ;;
 
         2)
@@ -179,7 +130,7 @@ while true; do
             fi
 
             echo "$url" > "$CONFIG"
-            echo "Link saved successfully!"
+            echo "Link saved."
             read -r -p "Press Enter..."
             ;;
 
@@ -189,13 +140,59 @@ while true; do
             ;;
 
         4)
+            packages=$(get_packages)
             clear
-            echo "===== GAME STATUS ====="
-            check_game
+            echo "===== EACH APP STATUS ====="
+
+            for package in $packages; do
+                echo
+                echo "$package"
+                check_game "$package"
+            done
+
             read -r -p "Press Enter..."
             ;;
 
         5)
+            packages=$(get_packages)
+            url=""
+            [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
+
+            declare -A failures
+            for package in $packages; do
+                failures["$package"]=0
+            done
+
+            while true; do
+                clear
+                echo "===== MONITOR EACH APP ====="
+
+                for package in $packages; do
+                    status=$(check_game "$package")
+                    echo
+                    echo "$package : $status"
+
+                    if [ "$status" = "IN_GAME" ]; then
+                        failures["$package"]=0
+                    else
+                        failures["$package"]=$((failures["$package"] + 1))
+                        echo "Checking ${failures[$package]}/10"
+
+                        if [ "${failures[$package]}" -ge 10 ]; then
+                            echo "Opening $package again..."
+                            open_app "$package" "$url"
+                            failures["$package"]=0
+                        fi
+                    fi
+                done
+
+                echo
+                echo "Press CTRL+C to stop"
+                sleep 3
+            done
+            ;;
+
+        6)
             exit 0
             ;;
 
