@@ -3,7 +3,19 @@
 
 CONFIG="$HOME/.rejoin_link"
 
+# ตรวจสอบแพ็กเกจ Roblox
+get_packages() {
+  pm list packages | grep -i 'roblox' | sed 's/package://'
+}
+
+# ตรวจสอบว่าแพ็กเกจมี Task หรือไม่
+has_task() {
+  /system/bin/dumpsys activity recents |
+    grep -F "A=$1 " >/dev/null
+}
+
 while true; do
+  clear
   echo "-----------------"
   echo "|    Rejoin     |"
   echo "| [1] open      |"
@@ -11,25 +23,20 @@ while true; do
   echo "| [3] exit      |"
   echo "-----------------"
 
-  read -p "select: " choice
+  read -r -p "select: " choice
 
   case "$choice" in
-
     1)
-      echo "กำลังค้นหา Roblox..."
-
-      packages=$(pm list packages | grep -i 'roblox' | sed 's/package://')
+      packages=$(get_packages)
 
       if [ -z "$packages" ]; then
         echo "ไม่พบแอป Roblox"
-        read -p "กด Enter เพื่อกลับเมนู..."
+        read -r -p "กด Enter..."
         continue
       fi
 
       url=""
-      if [ -f "$CONFIG" ]; then
-        url=$(cat "$CONFIG")
-      fi
+      [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
       for package in $packages; do
         echo "กำลังเปิด $package"
@@ -44,34 +51,35 @@ while true; do
         fi
 
         sleep 10
-        clear
       done
 
-      echo "เริ่มตรวจสอบ Roblox..."
-      echo "ตรวจสอบทุก 5 วินาที"
-      echo "กด CTRL+C เพื่อหยุด"
-
+      echo "เริ่มตรวจสอบ Task..."
       while true; do
-        echo "-----------------"
-        echo "กำลังตรวจสอบ Task..."
+        for package in $packages; do
+          if has_task "$package"; then
+            echo "[เปิดอยู่] $package"
+          else
+            echo "[ไม่พบ Task] กำลังเปิด $package"
 
-        tasks=$(/system/bin/dumpsys activity recents |
-          grep -E 'Recent #[0-9]+: TaskRecord.*com\.roblox')
+            if [ -n "$url" ]; then
+              am start -a android.intent.action.VIEW \
+                -d "$url" -p "$package"
+            else
+              am start -a android.intent.action.MAIN \
+                -c android.intent.category.LAUNCHER \
+                -p "$package"
+            fi
 
-        if [ -z "$tasks" ]; then
-          echo "ไม่พบ Roblox ใน Recent Tasks"
-        else
-          echo "$tasks"
-        fi
+            sleep 10
+          fi
+        done
 
-        echo "-----------------"
         sleep 5
-        clear
       done
       ;;
 
     2)
-      read -p "ใส่ Game ID หรือ Link: " game
+      read -r -p "ใส่ Game ID หรือ Link: " game
 
       if [[ "$game" =~ ^[0-9]+$ ]]; then
         url="https://www.roblox.com/games/$game"
@@ -79,27 +87,22 @@ while true; do
         url="$game"
       else
         echo "Game ID หรือ Link ไม่ถูกต้อง"
-        sleep 2
-        clear
+        read -r -p "กด Enter..."
         continue
       fi
 
       echo "$url" > "$CONFIG"
       echo "บันทึกลิงก์เรียบร้อยแล้ว!"
-
-      sleep 2
-      clear
+      read -r -p "กด Enter เพื่อกลับเมนู..."
       ;;
 
     3)
-      echo "ออกจากโปรแกรม"
       exit 0
       ;;
 
     *)
-      echo "ไม่มีคำสั่งนี้"
-      sleep 2
-      clear
+      echo "เลือกเมนูไม่ถูกต้อง"
+      sleep 1
       ;;
   esac
 done
