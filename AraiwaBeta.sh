@@ -9,11 +9,6 @@ get_packages() {
     pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
 }
 
-has_task() {
-    /system/bin/dumpsys activity recents |
-        grep -F "A=$1 " >/dev/null
-}
-
 check_game() {
     if [ ! -f "$STATUS" ]; then
         echo "NOT_IN_GAME"
@@ -40,7 +35,6 @@ create_api() {
 
     cat > "$AUTO/api.lua" <<'LUA'
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 
 while true do
@@ -60,6 +54,26 @@ end
 LUA
 
     echo "Created: $AUTO/api.lua"
+}
+
+open_apps() {
+    local packages="$1"
+    local url="$2"
+
+    for package in $packages; do
+        echo "Opening: $package"
+
+        if [ -n "$url" ]; then
+            am start -a android.intent.action.VIEW \
+                -d "$url" -p "$package"
+        else
+            am start -a android.intent.action.MAIN \
+                -c android.intent.category.LAUNCHER \
+                -p "$package"
+        fi
+
+        sleep 20
+    done
 }
 
 while true; do
@@ -117,55 +131,34 @@ while true; do
             url=""
             [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
-            for package in $packages; do
-                if [ -n "$url" ]; then
-                    am start -a android.intent.action.VIEW \
-                        -d "$url" -p "$package"
-                else
-                    am start -a android.intent.action.MAIN \
-                        -c android.intent.category.LAUNCHER \
-                        -p "$package"
-                fi
-                sleep 20
-            done
+            open_apps "$packages" "$url"
+
+            failures=0
 
             while true; do
                 clear
                 echo "===== GAME STATUS ====="
-            
+
                 status=$(check_game)
                 echo "$status"
-            
+
                 if [ "$status" = "IN_GAME" ]; then
                     failures=0
                 else
                     failures=$((failures + 1))
                     echo "Checking... $failures/10"
                 fi
-            
+
                 if [ "$failures" -ge 10 ]; then
+                    echo
                     echo "Game disconnected!"
-                    echo "Restarting Roblox..."
-            
-                    for package in $packages; do
-                        /system/bin/am force-stop "$package"
-                        sleep 2
-            
-                        if [ -n "$url" ]; then
-                            am start -a android.intent.action.VIEW \
-                                -d "$url" -p "$package"
-                        else
-                            am start -a android.intent.action.MAIN \
-                                -c android.intent.category.LAUNCHER \
-                                -p "$package"
-                        fi
-            
-                        sleep 20
-                    done
-            
+                    echo "Opening Roblox again..."
+
+                    open_apps "$packages" "$url"
+
                     failures=0
                 fi
-            
+
                 echo
                 echo "Press CTRL+C to stop monitoring"
                 sleep 3
