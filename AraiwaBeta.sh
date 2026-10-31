@@ -46,35 +46,41 @@ get_packages() {
 }
 
 # ==========================================
+# GET ROOT PROCESS LIST
+# ==========================================
+
+get_process_list() {
+    su -c "ps -A" 2>/dev/null
+}
+
+# ==========================================
 # PROCESS DETECTION
 # ==========================================
 
 is_running() {
     local package="$1"
+    local process_list="$2"
 
-    # Method 1: PIDOF
-    if /system/bin/pidof "$package" >/dev/null 2>&1; then
-        return 0
-    fi
+    [ -n "$process_list" ] || return 1
 
-    # Method 2: PS PROCESS LIST
-    if ps -A 2>/dev/null |
+    printf '%s\n' "$process_list" |
         awk -v pkg="$package" '
-        NR > 1 {
-            name = $NF
+        NR == 1 { next }
 
-            if (name == pkg || index(name, pkg ":") == 1) {
-                found = 1
+        {
+            for (i = 1; i <= NF; i++) {
+
+                if ($i == pkg ||
+                    index($i, pkg ":") == 1) {
+
+                    found = 1
+                }
             }
         }
-        END {
-            exit !found
-        }'
-    then
-        return 0
-    fi
 
-    return 1
+        END {
+            exit (found ? 0 : 1)
+        }'
 }
 
 # ==========================================
@@ -110,7 +116,9 @@ restart_package() {
     echo -e "${RED}[RESTART] $package${RESET}"
 
     if ! su -c "am force-stop '$package'"; then
+
         echo -e "${RED}[ERROR] Force-stop failed${RESET}"
+
         return 1
     fi
 
@@ -129,13 +137,17 @@ start_watchdog() {
 
     local packages
     local package
+    local process_list
     local count
 
     packages=$(get_packages)
 
     if [ -z "$packages" ]; then
+
         echo "No Roblox / Delta packages found."
+
         read -r -p "Press Enter..."
+
         return
     fi
 
@@ -144,15 +156,15 @@ start_watchdog() {
     declare -A FAIL_COUNT
 
     echo ""
-    echo "Starting applications..."
+    echo "================================"
+    echo "       ARIWAA INITIALIZING"
+    echo "================================"
 
     for package in $packages; do
 
         FAIL_COUNT["$package"]=0
 
-        open_package "$package"
-
-        sleep 15
+        echo "[FOUND] $package"
 
     done
 
@@ -160,17 +172,31 @@ start_watchdog() {
     echo "================================"
     echo "       ARIWAA WATCHDOG"
     echo "================================"
+
     echo "Max failures : $MAX_FAIL"
     echo "Interval     : $CHECK_INTERVAL sec"
+
     echo "================================"
     echo "Press CTRL+C to stop."
     echo ""
 
     while true; do
 
+        # Read process list once per cycle
+        process_list=$(get_process_list)
+
+        if [ -z "$process_list" ]; then
+
+            echo -e "${RED}[ERROR] Cannot read Root process list${RESET}"
+
+            sleep "$CHECK_INTERVAL"
+
+            continue
+        fi
+
         for package in $packages; do
 
-            if is_running "$package"; then
+            if is_running "$package" "$process_list"; then
 
                 FAIL_COUNT["$package"]=0
 
@@ -179,6 +205,7 @@ start_watchdog() {
             else
 
                 count="${FAIL_COUNT[$package]:-0}"
+
                 count=$((count + 1))
 
                 FAIL_COUNT["$package"]="$count"
@@ -189,25 +216,21 @@ start_watchdog() {
 
                     echo -e "${RED}[LIMIT REACHED] $package${RESET}"
 
-                    if restart_package "$package"; then
+                    # Do not force-stop automatically until
+                    # the correct package-to-instance mapping
+                    # has been verified.
 
-                        FAIL_COUNT["$package"]=0
+                    echo -e "${RED}[CHECK REQUIRED] $package${RESET}"
 
-                        echo -e "${GREEN}[RESTART SENT] $package${RESET}"
-
-                    else
-
-                        echo -e "${RED}[RESTART ERROR] $package${RESET}"
-
-                    fi
-
-                    sleep 10
+                    FAIL_COUNT["$package"]=0
 
                 fi
 
             fi
 
         done
+
+        echo "------------------------------"
 
         sleep "$CHECK_INTERVAL"
 
@@ -236,7 +259,9 @@ set_game_link() {
     else
 
         echo -e "${RED}Invalid Game ID or Link.${RESET}"
+
         read -r -p "Press Enter..."
+
         return
     fi
 
@@ -254,8 +279,11 @@ set_game_link() {
 create_api() {
 
     if ! mkdir -p "$AUTO"; then
+
         echo "Cannot access Autoexecute directory."
+
         read -r -p "Press Enter..."
+
         return
     fi
 
@@ -312,8 +340,11 @@ check_packages() {
 
     local packages
     local package
+    local process_list
 
     packages=$(get_packages)
+
+    process_list=$(get_process_list)
 
     echo ""
     echo "PACKAGE STATUS"
@@ -321,7 +352,7 @@ check_packages() {
 
     for package in $packages; do
 
-        if is_running "$package"; then
+        if is_running "$package" "$process_list"; then
 
             echo -e "${GREEN}[ONLINE]${RESET} $package"
 
@@ -334,6 +365,7 @@ check_packages() {
     done
 
     echo ""
+
     read -r -p "Press Enter..."
 }
 
@@ -346,6 +378,7 @@ while true; do
     clear
 
     WIDTH=$(tput cols 2>/dev/null)
+
     [[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
 
     [ "$WIDTH" -lt 10 ] && WIDTH=10
@@ -380,6 +413,7 @@ while true; do
     border
 
     printf "\n${YELLOW}Select: ${WHITE}"
+
     read -r choice
 
     case "$choice" in
