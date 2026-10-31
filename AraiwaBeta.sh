@@ -1,34 +1,44 @@
+
 #!/data/data/com.termux/files/usr/bin/bash
 
-clear
-
-Auto="/storage/emulated/0/Delta/Autoexecute"
-Status="$HOME/status.txt"
+AUTO="/storage/emulated/0/Delta/Autoexecute"
 CONFIG="$HOME/.rejoin_link"
+STATUS="$HOME/status.txt"
 
-CYAN='\033[1;36m'
-WHITE='\033[1;37m'
-YELLOW='\033[1;33m'
-RED='\033[1;31m'
-GREEN='\033[1;32m'
-RESET='\033[0m'
-
-# Find Roblox packages
 get_packages() {
     pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
 }
 
-# Check if package has a Task
 has_task() {
     /system/bin/dumpsys activity recents |
         grep -F "A=$1 " >/dev/null
 }
 
-# Create api
-CreateApi() {
-    mkdir -p "%Auto"
-    cat > "$Auto/api.luau" << 'LUA'
+check_game() {
+    if [ ! -f "$STATUS" ]; then
+        echo "NOT_IN_GAME"
+        return
+    fi
 
+    local status timestamp now
+
+    status=$(head -n 1 "$STATUS")
+    timestamp=$(tail -n 1 "$STATUS")
+    now=$(date +%s)
+
+    if [[ "$status" == "IN_GAME" ]] &&
+       [[ "$timestamp" =~ ^[0-9]+$ ]] &&
+       (( now - timestamp >= 0 && now - timestamp <= 10 )); then
+        echo "IN_GAME"
+    else
+        echo "NOT_IN_GAME"
+    fi
+}
+
+create_api() {
+    mkdir -p "$AUTO"
+
+    cat > "$AUTO/api.lua" <<'LUA'
 local Players = game:GetService("Players")
 local Player = Players.LocalPlayer
 
@@ -49,54 +59,18 @@ RunService.Heartbeat:Connect(function()
 
     task.wait(3)
 end)
-
 LUA
 
-echo "Created: $Auto/api.luau"
-
-}
-
-# Force stop package
-force_stop() {
-    package="$1"
-
-    echo -e "${YELLOW}[FORCE STOP]${RESET} $package"
-
-    if su -c "am force-stop '$package'"; then
-        echo -e "${GREEN}[STOP OK]${RESET} $package"
-        return 0
-    else
-        echo -e "${RED}[STOP ERROR]${RESET} $package"
-        return 1
-    fi
-}
-
-# Open package
-open_package() {
-    package="$1"
-    url="$2"
-
-    force_stop "$package"
-
-    sleep 2
-
-    echo "[OPENING] $package"
-
-    if [ -n "$url" ]; then
-        am start -a android.intent.action.VIEW \
-            -d "$url" -p "$package"
-    else
-        am start -a android.intent.action.MAIN \
-            -c android.intent.category.LAUNCHER \
-            -p "$package"
-    fi
-
-    sleep 10
+    echo "Created: $AUTO/api.lua"
 }
 
 while true; do
-
     clear
+
+    CYAN='\033[1;36m'
+    WHITE='\033[1;37m'
+    YELLOW='\033[1;33m'
+    RESET='\033[0m'
 
     WIDTH=$(tput cols 2>/dev/null)
     [[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
@@ -118,15 +92,14 @@ while true; do
     }
 
     border
-    line ""
     line "       A r i w a a"
-    line ""
     border
     line ""
     line " [1] Open Roblox"
     line " [2] Set Game Link"
-    line " [3] Setup executor"
-    line " [4] Exit"
+    line " [3] Setup Executor"
+    line " [4] Check Game Status"
+    line " [5] Exit"
     line ""
     border
 
@@ -134,7 +107,6 @@ while true; do
     read -r choice
 
     case "$choice" in
-
         1)
             packages=$(get_packages)
 
@@ -147,37 +119,25 @@ while true; do
             url=""
             [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
-            echo ""
-            echo "Found packages:"
-            echo "$packages"
-            echo ""
-
-            # Open all packages
             for package in $packages; do
-                open_package "$package" "$url"
+                if [ -n "$url" ]; then
+                    am start -a android.intent.action.VIEW \
+                        -d "$url" -p "$package"
+                else
+                    am start -a android.intent.action.MAIN \
+                        -c android.intent.category.LAUNCHER \
+                        -p "$package"
+                fi
+                sleep 20
             done
 
-            echo ""
-            echo "[MONITOR STARTED]"
-            echo ""
-
-            # Auto rejoin
             while true; do
-
-                for package in $packages; do
-
-                    if has_task "$package"; then
-                        :
-                    else
-                        echo "[TASK NOT FOUND] $package"
-
-                        open_package "$package" "$url"
-                    fi
-
-                done
-
-                sleep 15
-
+                clear
+                echo "===== GAME STATUS ====="
+                check_game
+                echo
+                echo "Press CTRL+C to stop monitoring"
+                sleep 3
             done
             ;;
 
@@ -186,28 +146,32 @@ while true; do
 
             if [[ "$game" =~ ^[0-9]+$ ]]; then
                 url="roblox://experiences/start?placeId=$game"
-
             elif [[ "$game" == http://* || "$game" == https://* ]]; then
                 url="$game"
-
             else
-                echo "Invalid Game Id or Link."
+                echo "Invalid Game ID or Link."
                 read -r -p "Press Enter..."
                 continue
             fi
 
             echo "$url" > "$CONFIG"
-
             echo "Link saved successfully!"
-            read -r -p "Press Enter to return to menu..."
+            read -r -p "Press Enter..."
             ;;
-        
+
         3)
-            CreateApi
+            create_api
             read -r -p "Press Enter..."
             ;;
 
         4)
+            clear
+            echo "===== GAME STATUS ====="
+            check_game
+            read -r -p "Press Enter..."
+            ;;
+
+        5)
             exit 0
             ;;
 
@@ -215,7 +179,5 @@ while true; do
             echo "Invalid option."
             sleep 1
             ;;
-
     esac
-
 done
