@@ -140,15 +140,15 @@ while true; do
                     failures=0
                 else
                     failures=$((failures + 1))
-                    echo "Checking... $failures/4"
+                    echo "Checking... $failures/10"
                 fi
             
-                if [ "$failures" -ge 4 ]; then
+                if [ "$failures" -ge 10 ]; then
                     echo "Game disconnected!"
                     echo "Restarting Roblox..."
             
                     for package in $packages; do
-                        am force-stop "$package"
+                        /system/bin/am force-stop "$package"
                         sleep 2
             
                         if [ -n "$url" ]; then
