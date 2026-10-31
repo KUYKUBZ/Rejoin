@@ -1,37 +1,45 @@
 
 #!/data/data/com.termux/files/usr/bin/bash
 
+CONFIG="$HOME/.rejoin_link"
+
 echo "-----------------"
 echo "|    Rejoin     |"
 echo "| [1] open      |"
-echo "| [2] placeid   |"
+echo "| [2] set link  |"
 echo "-----------------"
 
 read -p "select: " choice
 
 case "$choice" in
-  1)
-    echo "กำลังค้นหาเกม..."
 
-    packages=$(pm list packages | grep -Ei 'roblox|zam\.delt')
+  1)
+    echo "กำลังค้นหา Roblox..."
+
+    packages=$(pm list packages | grep -i 'roblox' | sed 's/package://')
 
     if [ -z "$packages" ]; then
-      echo "ไม่พบแอปที่ต้องการ"
-    else
-      count=$(echo "$packages" | wc -l)
+      echo "ไม่พบแอป Roblox"
+      exit 1
+    fi
 
-      if [ "$count" -gt 1 ]; then
-        echo "พบหลายแอป:"
-        echo "$packages"
-        echo "กรุณาเลือก Package ที่ต้องการ"
+    for package in $packages; do
+      echo "กำลังเปิด $package"
+
+      if [ -f "$CONFIG" ]; then
+        url=$(cat "$CONFIG")
+
+        am start -a android.intent.action.VIEW \
+          -d "$url" \
+          -p "$package"
       else
-        package=${packages#package:}
-        echo "กำลังเปิด $package"
         am start -a android.intent.action.MAIN \
           -c android.intent.category.LAUNCHER \
           -p "$package"
       fi
-    fi
+
+      sleep 3
+    done
     ;;
 
   2)
@@ -46,7 +54,8 @@ case "$choice" in
       exit 1
     fi
 
-    am start -a android.intent.action.VIEW -d "$url"
+    echo "$url" > "$CONFIG"
+    echo "บันทึกลิงก์เรียบร้อยแล้ว"
     ;;
 
   *)
