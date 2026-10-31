@@ -23,21 +23,21 @@ WHITE='\033[1;37m'
 YELLOW='\033[1;33m'
 RESET='\033[0m'
 
-echo -e "${CYAN}"
-echo "╔══════════════════════════════╗"
-echo "║                              ║"
-echo "║          A r i w a a         ║"
-echo "║                              ║"
-echo "╠══════════════════════════════╣"
-echo "║                              ║"
-echo -e "║  ${WHITE}[1]${CYAN} Open Roblox               ║"
-echo -e "║  ${WHITE}[2]${CYAN} Set Game Link              ║"
-echo -e "║  ${WHITE}[3]${CYAN} Exit                       ║"
-echo "║                              ║"
-echo "╚══════════════════════════════╝"
-echo -e "${RESET}"
+printf "${CYAN}"
+printf "╔══════════════════════════════╗\n"
+printf "║                              ║\n"
+printf "║          A r i w a a         ║\n"
+printf "║                              ║\n"
+printf "╠══════════════════════════════╣\n"
+printf "║                              ║\n"
+printf "║  ${WHITE}[1]${CYAN} Open Roblox               ║\n"
+printf "║  ${WHITE}[2]${CYAN} Set Game Link              ║\n"
+printf "║  ${WHITE}[3]${CYAN} Exit                       ║\n"
+printf "║                              ║\n"
+printf "╚══════════════════════════════╝\n"
+printf "${RESET}"
 
-echo -ne "${YELLOW}Select an option ${WHITE}➜ ${RESET}"
+printf "${YELLOW}Select an option ${WHITE}➜ ${RESET}"
 read -r choice
 
   case "$choice" in
