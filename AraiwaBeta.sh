@@ -1,446 +1,215 @@
 
 #!/data/data/com.termux/files/usr/bin/bash
 
-# ==========================================
-# ARIWAA BETA
-# ==========================================
-
 clear
 
-AUTO="/storage/emulated/0/Delta/Autoexecute"
 CONFIG="$HOME/.rejoin_link"
-
-MAX_FAIL=10
-CHECK_INTERVAL=5
 
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 YELLOW='\033[1;33m'
-RED='\033[1;31m'
 GREEN='\033[1;32m'
+RED='\033[1;31m'
 RESET='\033[0m'
 
-GAME_URL=""
-
-# ==========================================
-# LOAD CONFIG
-# ==========================================
-
-load_config() {
-    GAME_URL=""
-
-    if [ -f "$CONFIG" ]; then
-        GAME_URL=$(cat "$CONFIG")
-    fi
-}
-
-# ==========================================
-# PACKAGE DETECTION
-# ==========================================
-
+# Find Roblox packages
 get_packages() {
-    pm list packages 2>/dev/null |
-        sed 's/package://' |
+    pm list packages |
         grep -Ei 'roblox|delt' |
-        sort -u
+        sed 's/package://'
 }
 
-# ==========================================
-# GET ROOT PROCESS LIST
-# ==========================================
-
-get_process_list() {
-    su -c "ps -A" 2>/dev/null
+# Get foreground activity
+get_foreground() {
+    dumpsys activity activities 2>/dev/null |
+        grep -m 1 'mResumedActivity'
 }
 
-# ==========================================
-# PROCESS DETECTION
-# ==========================================
-
-is_running() {
+# Check foreground package
+is_foreground() {
     local package="$1"
-    local process_list="$2"
+    local activity
 
-    [ -n "$process_list" ] || return 1
+    activity=$(get_foreground)
 
-    printf '%s\n' "$process_list" |
-        awk -v pkg="$package" '
-        NR == 1 { next }
-
-        {
-            for (i = 1; i <= NF; i++) {
-
-                if ($i == pkg ||
-                    index($i, pkg ":") == 1) {
-
-                    found = 1
-                }
-            }
-        }
-
-        END {
-            exit (found ? 0 : 1)
-        }'
+    echo "$activity" | grep -F "$package" >/dev/null
 }
 
-# ==========================================
-# OPEN PACKAGE
-# ==========================================
-
+# Open Roblox
 open_package() {
     local package="$1"
+    local url="$2"
 
-    echo -e "${GREEN}[OPEN] $package${RESET}"
+    echo -e "${CYAN}[OPEN] $package${RESET}"
 
-    if [ -n "$GAME_URL" ]; then
-
-        am start \
-            -a android.intent.action.VIEW \
-            -d "$GAME_URL" \
-            -p "$package"
-
+    if [ -n "$url" ]; then
+        am start -a android.intent.action.VIEW \
+            -d "$url" -p "$package"
     else
-
         monkey -p "$package" 1
-
     fi
 }
 
-# ==========================================
-# RESTART PACKAGE
-# ==========================================
-
-restart_package() {
+# Force stop Roblox
+stop_package() {
     local package="$1"
 
-    echo -e "${RED}[RESTART] $package${RESET}"
+    echo -e "${RED}[FORCE STOP] $package${RESET}"
 
-    if ! su -c "am force-stop '$package'"; then
+    su -c "am force-stop $package"
 
-        echo -e "${RED}[ERROR] Force-stop failed${RESET}"
-
-        return 1
-    fi
-
-    sleep 2
-
-    open_package "$package"
-
-    return $?
+    sleep 3
 }
 
-# ==========================================
-# WATCHDOG
-# ==========================================
+# Wait for app foreground
+wait_for_foreground() {
+    local package="$1"
+    local timeout=120
+    local elapsed=0
 
-start_watchdog() {
+    echo -e "${YELLOW}[WAIT] Checking app...${RESET}"
 
-    local packages
-    local package
-    local process_list
-    local count
+    while [ "$elapsed" -lt "$timeout" ]; do
 
-    packages=$(get_packages)
+        if is_foreground "$package"; then
+            echo -e "${GREEN}[APP OPEN] $package${RESET}"
+            return 0
+        fi
 
-    if [ -z "$packages" ]; then
-
-        echo "No Roblox / Delta packages found."
-
-        read -r -p "Press Enter..."
-
-        return
-    fi
-
-    load_config
-
-    declare -A FAIL_COUNT
-
-    echo ""
-    echo "================================"
-    echo "       ARIWAA INITIALIZING"
-    echo "================================"
-
-    for package in $packages; do
-
-        FAIL_COUNT["$package"]=0
-
-        echo "[FOUND] $package"
+        sleep 2
+        elapsed=$((elapsed + 2))
 
     done
 
-    echo ""
-    echo "================================"
-    echo "       ARIWAA WATCHDOG"
-    echo "================================"
+    echo -e "${RED}[TIMEOUT] App not detected${RESET}"
 
-    echo "Max failures : $MAX_FAIL"
-    echo "Interval     : $CHECK_INTERVAL sec"
+    return 1
+}
 
-    echo "================================"
-    echo "Press CTRL+C to stop."
-    echo ""
+# Auto retry
+auto_rejoin() {
+    local package="$1"
+    local url="$2"
+    local attempt=0
 
     while true; do
 
-        # Read process list once per cycle
-        process_list=$(get_process_list)
+        attempt=$((attempt + 1))
 
-        if [ -z "$process_list" ]; then
+        echo
+        echo -e "${CYAN}==============================${RESET}"
+        echo "[ATTEMPT $attempt]"
+        echo "[PACKAGE] $package"
+        echo -e "${CYAN}==============================${RESET}"
 
-            echo -e "${RED}[ERROR] Cannot read Root process list${RESET}"
+        open_package "$package" "$url"
 
-            sleep "$CHECK_INTERVAL"
+        if wait_for_foreground "$package"; then
 
-            continue
+            echo
+            echo -e "${GREEN}[APP DETECTED]${RESET}"
+            echo "Roblox is foreground."
+            echo "Server connection is not verified."
+
+            return 0
+
         fi
 
-        for package in $packages; do
+        echo -e "${RED}[NOT DETECTED] Restarting...${RESET}"
 
-            if is_running "$package" "$process_list"; then
+        stop_package "$package"
 
-                FAIL_COUNT["$package"]=0
-
-                echo -e "${GREEN}[ONLINE]${RESET} $package"
-
-            else
-
-                count="${FAIL_COUNT[$package]:-0}"
-
-                count=$((count + 1))
-
-                FAIL_COUNT["$package"]="$count"
-
-                echo -e "${YELLOW}[FAILED]${RESET} $package : $count/$MAX_FAIL"
-
-                if (( count >= MAX_FAIL )); then
-
-                    echo -e "${RED}[LIMIT REACHED] $package${RESET}"
-
-                    # Do not force-stop automatically until
-                    # the correct package-to-instance mapping
-                    # has been verified.
-
-                    echo -e "${RED}[CHECK REQUIRED] $package${RESET}"
-
-                    FAIL_COUNT["$package"]=0
-
-                fi
-
-            fi
-
-        done
-
-        echo "------------------------------"
-
-        sleep "$CHECK_INTERVAL"
+        sleep 2
 
     done
 }
 
-# ==========================================
-# SET GAME LINK
-# ==========================================
-
-set_game_link() {
-
-    local game
-    local url
-
-    read -r -p "Enter Game ID or Link: " game
-
-    if [[ "$game" =~ ^[0-9]+$ ]]; then
-
-        url="roblox://experiences/start?placeId=$game"
-
-    elif [[ "$game" == http://* || "$game" == https://* ]]; then
-
-        url="$game"
-
-    else
-
-        echo -e "${RED}Invalid Game ID or Link.${RESET}"
-
-        read -r -p "Press Enter..."
-
-        return
-    fi
-
-    echo "$url" > "$CONFIG"
-
-    echo -e "${GREEN}Game Link Saved!${RESET}"
-
-    read -r -p "Press Enter..."
-}
-
-# ==========================================
-# CREATE LUA API
-# ==========================================
-
-create_api() {
-
-    if ! mkdir -p "$AUTO"; then
-
-        echo "Cannot access Autoexecute directory."
-
-        read -r -p "Press Enter..."
-
-        return
-    fi
-
-    cat > "$AUTO/api.lua" <<'LUA'
-local Players = game:GetService("Players")
-local Player = Players.LocalPlayer
-
-local folder = "Ariwaa"
-
-if not isfolder(folder) then
-    makefolder(folder)
-end
-
-local filename = folder .. "/" ..
-    tostring(Player.UserId) .. "_status.txt"
-
-while true do
-
-    local Character = Player.Character
-
-    local Humanoid = Character and
-        Character:FindFirstChild("Humanoid")
-
-    local HRP = Character and
-        Character:FindFirstChild("HumanoidRootPart")
-
-    local status = "NOT_IN_GAME"
-
-    if Humanoid and HRP and Humanoid.Health > 0 then
-        status = "IN_GAME"
-    end
-
-    writefile(
-        filename,
-        status .. "\n" ..
-        tostring(Player.UserId) .. "\n" ..
-        os.time()
-    )
-
-    task.wait(3)
-end
-LUA
-
-    echo -e "${GREEN}Created: $AUTO/api.lua${RESET}"
-
-    read -r -p "Press Enter..."
-}
-
-# ==========================================
-# CHECK PACKAGE STATUS
-# ==========================================
-
-check_packages() {
-
-    local packages
-    local package
-    local process_list
-
-    packages=$(get_packages)
-
-    process_list=$(get_process_list)
-
-    echo ""
-    echo "PACKAGE STATUS"
-    echo "----------------------------"
-
-    for package in $packages; do
-
-        if is_running "$package" "$process_list"; then
-
-            echo -e "${GREEN}[ONLINE]${RESET} $package"
-
-        else
-
-            echo -e "${RED}[OFFLINE]${RESET} $package"
-
-        fi
-
-    done
-
-    echo ""
-
-    read -r -p "Press Enter..."
-}
-
-# ==========================================
-# MAIN MENU
-# ==========================================
-
+# Main menu
 while true; do
 
     clear
 
-    WIDTH=$(tput cols 2>/dev/null)
+    echo -e "${CYAN}+------------------------------+${RESET}"
+    echo "|          A R I W A A         |"
+    echo "|                              |"
+    echo "| [1] Open Roblox              |"
+    echo "| [2] Set Game Link            |"
+    echo "| [3] Exit                     |"
+    echo -e "${CYAN}+------------------------------+${RESET}"
 
-    [[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
-
-    [ "$WIDTH" -lt 10 ] && WIDTH=10
-    [ "$WIDTH" -gt 50 ] && WIDTH=50
-
-    INNER=$((WIDTH - 2))
-
-    border() {
-        printf "${CYAN}+"
-        printf '%*s' "$INNER" '' | tr ' ' '-'
-        printf "+${RESET}\n"
-    }
-
-    line() {
-        printf "${CYAN}|${RESET}"
-        printf "%-*.*s" "$INNER" "$INNER" "$1"
-        printf "${CYAN}|${RESET}\n"
-    }
-
-    border
-    line ""
-    line "       A r i w a a"
-    line ""
-    border
-    line ""
-    line " [1] Open Roblox + Watchdog"
-    line " [2] Set Game Link"
-    line " [3] Setup Executor"
-    line " [4] Check Package Status"
-    line " [5] Exit"
-    line ""
-    border
-
-    printf "\n${YELLOW}Select: ${WHITE}"
-
-    read -r choice
+    echo
+    read -r -p "Select: " choice
 
     case "$choice" in
 
         1)
-            start_watchdog
+
+            packages=$(get_packages)
+
+            if [ -z "$packages" ]; then
+                echo -e "${RED}No Roblox apps found.${RESET}"
+                read -r -p "Press Enter..."
+                continue
+            fi
+
+            url=""
+
+            if [ -f "$CONFIG" ]; then
+                url=$(cat "$CONFIG")
+            fi
+
+            echo
+            echo "Found packages:"
+            echo "$packages"
+
+            for package in $packages; do
+                auto_rejoin "$package" "$url"
+            done
+
+            read -r -p "Press Enter to return..."
+
             ;;
 
         2)
-            set_game_link
+
+            read -r -p "Enter Game ID or Link: " game
+
+            if [[ "$game" =~ ^[0-9]+$ ]]; then
+
+                url="roblox://experiences/start?placeId=$game"
+
+            elif [[ "$game" == http://* ||
+                    "$game" == https://* ]]; then
+
+                url="$game"
+
+            else
+
+                echo -e "${RED}Invalid Game ID or Link.${RESET}"
+                read -r -p "Press Enter..."
+                continue
+
+            fi
+
+            echo "$url" > "$CONFIG"
+
+            echo -e "${GREEN}Game Link saved successfully!${RESET}"
+
+            read -r -p "Press Enter..."
+
             ;;
 
         3)
-            create_api
-            ;;
 
-        4)
-            check_packages
-            ;;
-
-        5)
             exit 0
+
             ;;
 
         *)
-            echo "Invalid option."
+
+            echo -e "${RED}Invalid option.${RESET}"
             sleep 1
+
             ;;
 
     esac
