@@ -167,7 +167,7 @@ while true; do
             read -r -p "Press Enter to return to menu..."
             ;;
         
-        4)
+        3)
             exit 0
             ;;
 
