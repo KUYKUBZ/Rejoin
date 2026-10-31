@@ -88,10 +88,8 @@ read -r choice
             -p "$package"
         fi
 
-        sleep 10
+        sleep 20
       done
-
-      echo "Starting Task monitor..."
 
       while true; do
         for package in $packages; do
