@@ -16,7 +16,6 @@ has_task() {
 
 while true; do
 
-
 clear
 
 CYAN='\033[1;36m'
@@ -24,46 +23,42 @@ WHITE='\033[1;37m'
 YELLOW='\033[1;33m'
 RESET='\033[0m'
 
-# Get terminal width
-WIDTH=$(tput cols 2>/dev/null || echo 40)
-
-# Keep the box within the screen
+# Detect screen width
+WIDTH=$(tput cols 2>/dev/null)
+[[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
+[ "$WIDTH" -lt 10 ] && WIDTH=10
 [ "$WIDTH" -gt 50 ] && WIDTH=50
-[ "$WIDTH" -lt 24 ] && WIDTH=24
 
 INNER=$((WIDTH - 2))
 
-# Print centered text inside the box
-print_line() {
-    text="$1"
-    printf "%b" "$CYAN"
-    printf "|"
-    printf "%-*s" "$INNER" "$text"
-    printf "|\n"
+# Draw border
+border() {
+    printf "${CYAN}+"
+    printf '%*s' "$INNER" '' | tr ' ' '-'
+    printf "+${RESET}\n"
 }
 
-# Print top and bottom border
-print_border() {
-    printf "%b+" "$CYAN"
-    printf '%*s' "$INNER" '' | tr ' ' '-'
-    printf "+\n"
+# Draw text without overflowing
+line() {
+    printf "${CYAN}|${RESET}"
+    printf "%-*.*s" "$INNER" "$INNER" "$1"
+    printf "${CYAN}|${RESET}\n"
 }
 
 clear
-print_border
-print_line ""
-print_line "A r i w a a"
-print_line ""
-print_border
-print_line ""
-print_line "[1] Open Roblox"
-print_line "[2] Set Game Link"
-print_line "[3] Exit"
-print_line ""
-print_border
-printf "%b" "$RESET"
+border
+line ""
+line "       A r i w a a"
+line ""
+border
+line ""
+line " [1] Open Roblox"
+line " [2] Set Game Link"
+line " [3] Exit"
+line ""
+border
 
-printf "${YELLOW}Select an option ${WHITE}> ${RESET}"
+printf "\n${YELLOW}Select: ${WHITE}"
 read -r choice
 
 
