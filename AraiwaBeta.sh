@@ -136,8 +136,7 @@ while true; do
     line " [1] Open Roblox"
     line " [2] Set Game Link"
     line " [3] Setup Executor"
-    line " [4] Check Game Status"
-    line " [5] Exit"
+    line " [4] Exit"
     line ""
     border
 
