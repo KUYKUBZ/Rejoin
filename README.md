@@ -2,11 +2,6 @@
 ```lua
 pkg update && pkg upgrade -y
 ```
-
-# Rejoin
-```lua
-curl -sL https://github.com/KUYKUBZ/Rejoin/raw/refs/heads/main/nefhub.sh | bash
-```
 # Araiwa
 ```lua
 curl -L "https://raw.githubusercontent.com/KUYKUBZ/Rejoin/refs/heads/main/Araiwa.sh" -o Araiwa.sh
