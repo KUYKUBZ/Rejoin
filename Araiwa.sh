@@ -5,7 +5,7 @@ CONFIG="$HOME/.rejoin_link"
 
 # Find Roblox packages
 get_packages() {
-  pm list packages | grep -i 'roblox' | sed 's/package://'
+  pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
 }
 
 # Check if package has a Task
@@ -15,15 +15,30 @@ has_task() {
 }
 
 while true; do
-  clear
-  echo "-----------------"
-  echo "|    Rejoin     |"
-  echo "| [1] Open      |"
-  echo "| [2] Set Link  |"
-  echo "| [3] Exit      |"
-  echo "-----------------"
 
-  read -r -p "Select: " choice
+clear
+
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+YELLOW='\033[1;33m'
+RESET='\033[0m'
+
+echo -e "${CYAN}"
+echo "╔══════════════════════════════╗"
+echo "║                              ║"
+echo "║          A r i w a a         ║"
+echo "║                              ║"
+echo "╠══════════════════════════════╣"
+echo "║                              ║"
+echo "║  ${WHITE}[1]${CYAN}  Open Roblox              ║"
+echo "║  ${WHITE}[2]${CYAN}  Set Game Link             ║"
+echo "║  ${WHITE}[3]${CYAN}  Exit                      ║"
+echo "║                              ║"
+echo "╚══════════════════════════════╝"
+echo -e "${RESET}"
+
+echo -ne "${YELLOW} Select an option ${WHITE}➜ ${RESET}"
+read -r choice
 
   case "$choice" in
     1)
