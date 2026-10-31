@@ -119,7 +119,7 @@ start_watchdog() {
     for package in $packages; do
         FAIL_COUNT["$package"]=0
         open_package "$package"
-        sleep 3
+        sleep 15
     done
 
     echo ""
@@ -161,7 +161,7 @@ start_watchdog() {
                         FAIL_COUNT["$package"]=0
                     fi
 
-                    sleep 3
+                    sleep 10
 
                 fi
 
