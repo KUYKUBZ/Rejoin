@@ -3,27 +3,28 @@
 
 AUTO="/storage/emulated/0/Delta/Autoexecute"
 CONFIG="$HOME/.rejoin_link"
-STATUS_DIR="$HOME/rejoin_status"
+LOG_DIR="$HOME/rejoin_logs"
+RESULT_DIR="$HOME/rejoin_results"
+
+mkdir -p "$LOG_DIR" "$RESULT_DIR"
 
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 YELLOW='\033[1;33m'
-RED='\033[1;31m'
 GREEN='\033[1;32m'
+RED='\033[1;31m'
 RESET='\033[0m'
-
-mkdir -p "$STATUS_DIR"
 
 # ตรวจสอบ Root
 check_root() {
     if ! su -c id 2>/dev/null | grep -q 'uid=0'; then
-        echo -e "${RED}Root permission unavailable!${RESET}"
+        echo -e "${RED}ROOT NOT AVAILABLE${RESET}"
         return 1
     fi
     return 0
 }
 
-# ค้นหา Package ID
+# ตรวจหา Package
 get_packages() {
     pm list packages |
         grep -Ei 'roblox|delt' |
@@ -31,161 +32,226 @@ get_packages() {
         sort -u
 }
 
-# ตรวจสอบสถานะแยกตาม Package
-check_game() {
-    local package="$1"
-    local file="$STATUS_DIR/$package.txt"
+# ตรวจสอบชื่อ Package ให้ปลอดภัย
+valid_package() {
+    [[ "$1" =~ ^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)+$ ]]
+}
 
-    if [ ! -f "$file" ]; then
-        echo "NOT_IN_GAME"
+# บันทึก Log
+save_log() {
+    local package="$1"
+    shift
+
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" \
+        >> "$LOG_DIR/$package.log"
+}
+
+# แสดงผลคำสั่ง
+show_result() {
+    local name="$1"
+    local output="$2"
+    local code="$3"
+
+    echo
+    echo "$name"
+
+    if [ "$code" -eq 0 ]; then
+        echo -e "${GREEN}RESULT: SUCCESS${RESET}"
+    else
+        echo -e "${RED}RESULT: ERROR${RESET}"
+    fi
+
+    echo "EXIT CODE: $code"
+
+    if [ -n "$output" ]; then
+        echo "OUTPUT:"
+        printf '%s\n' "$output"
+    fi
+}
+
+# ปิดและเปิดแอป พร้อมตรวจสอบผลแยกกัน
+restart_package() {
+    local package="$1"
+    local url="$2"
+    local output
+    local code
+    local log="$LOG_DIR/$package.log"
+
+    if ! valid_package "$package"; then
+        echo "Invalid Package ID: $package"
+        return 1
+    fi
+
+    clear
+
+    echo "================================"
+    echo "       CURRENT PACKAGE"
+    echo "================================"
+    echo "APP: $package"
+    echo "================================"
+
+    : > "$log"
+
+    # ขั้นตอนปิด
+    echo
+    echo " [1] STOPPING APP"
+
+    output=$(su -c "am force-stop $package" 2>&1)
+    code=$?
+
+    show_result "STOP APP" "$output" "$code"
+    save_log "$package" "STOP exit=$code output=$output"
+
+    if [ "$code" -ne 0 ]; then
+        echo -e "${RED}Cannot continue: STOP FAILED${RESET}"
+        save_log "$package" "RESTART ABORTED"
+        return 1
+    fi
+
+    sleep 3
+
+    # ขั้นตอนเปิด
+    echo
+    echo " [2] STARTING APP"
+
+    if [[ "$package" == *roblox* ]] && [ -n "$url" ]; then
+        output=$(su -c "am start -a android.intent.action.VIEW -d '$url' -p '$package'" 2>&1)
+    else
+        output=$(su -c "monkey -p '$package' 1" 2>&1)
+    fi
+
+    code=$?
+
+    show_result "START APP" "$output" "$code"
+    save_log "$package" "START exit=$code output=$output"
+
+    sleep 5
+
+    # ตรวจสอบ Process
+    echo
+    echo " [3] PROCESS CHECK"
+
+    output=$(su -c "pidof $package" 2>&1)
+    code=$?
+
+    if [ -n "$output" ] && [ "$code" -eq 0 ]; then
+        echo -e "${GREEN}PROCESS: RUNNING${RESET}"
+        save_log "$package" "PROCESS RUNNING: $output"
+    else
+        echo -e "${RED}PROCESS: NOT DETECTED${RESET}"
+        save_log "$package" "PROCESS NOT DETECTED"
+    fi
+
+    # บันทึกผลล่าสุด
+    {
+        echo "PACKAGE=$package"
+        echo "STOP_EXIT_CODE=$code"
+        echo "PROCESS_OUTPUT=$output"
+        echo "TIME=$(date '+%Y-%m-%d %H:%M:%S')"
+    } > "$RESULT_DIR/$package.txt"
+
+    echo
+    echo "================================"
+    echo "PACKAGE FINISHED"
+    echo "================================"
+
+    sleep 3
+}
+
+# ทำงานทีละ Package
+run_all() {
+    local packages="$1"
+    local url="$2"
+
+    local total=0
+    local success=0
+    local errors=0
+
+    while IFS= read -r package; do
+        [ -z "$package" ] && continue
+
+        total=$((total + 1))
+
+        if restart_package "$package" "$url"; then
+            success=$((success + 1))
+        else
+            errors=$((errors + 1))
+        fi
+
+    done <<< "$packages"
+
+    clear
+
+    echo "================================"
+    echo "          FINAL REPORT"
+    echo "================================"
+    echo "TOTAL:   $total"
+    echo -e "SUCCESS: ${GREEN}$success${RESET}"
+    echo -e "ERROR:   ${RED}$errors${RESET}"
+    echo "================================"
+
+    echo
+    echo "PACKAGE ERROR REPORT"
+
+    while IFS= read -r package; do
+        [ -z "$package" ] && continue
+
+        echo
+        echo "PACKAGE: $package"
+
+        if [ -f "$LOG_DIR/$package.log" ]; then
+            tail -n 5 "$LOG_DIR/$package.log"
+        else
+            echo "NO LOG"
+        fi
+
+    done <<< "$packages"
+
+    echo
+    read -r -p "Press Enter..."
+}
+
+# ตั้งค่า Game Link
+set_link() {
+    read -r -p "Enter Game ID or Link: " game
+
+    if [[ "$game" =~ ^[0-9]+$ ]]; then
+        url="roblox://experiences/start?placeId=$game"
+
+    elif [[ "$game" == http://* || "$game" == https://* ]]; then
+        url="$game"
+
+    else
+        echo "Invalid Game ID or Link"
+        read -r -p "Press Enter..."
         return
     fi
 
-    local status timestamp now
+    printf '%s\n' "$url" > "$CONFIG"
 
-    status=$(head -n 1 "$file")
-    timestamp=$(tail -n 1 "$file")
-    now=$(date +%s)
+    echo "Game Link saved!"
+    read -r -p "Press Enter..."
+}
 
-    if [[ "$status" == "IN_GAME" ]] &&
-       [[ "$timestamp" =~ ^[0-9]+$ ]] &&
-       (( now - timestamp >= 0 && now - timestamp <= 10 )); then
-        echo "IN_GAME"
+# ดู Log
+view_logs() {
+    clear
+    echo "========== PACKAGE LOGS =========="
+
+    if [ ! -d "$LOG_DIR" ]; then
+        echo "No logs found."
     else
-        echo "NOT_IN_GAME"
-    fi
-}
-
-# แสดงสถานะทั้งหมด
-show_status() {
-    local packages="$1"
-
-    echo "========== PACKAGE STATUS =========="
-
-    while IFS= read -r package; do
-        [ -z "$package" ] && continue
-
-        status=$(check_game "$package")
-
-        if [ "$status" = "IN_GAME" ]; then
-            echo -e "$package : ${GREEN}$status${RESET}"
-        else
-            echo -e "$package : ${RED}$status${RESET}"
-        fi
-    done <<< "$packages"
-
-    echo "===================================="
-}
-
-# เปิดแอปทีละตัว
-open_one() {
-    local package="$1"
-    local url="$2"
-
-    echo
-    echo "Package: $package"
-
-    echo "Stopping app..."
-
-    su -c "am force-stop $package"
-
-    sleep 2
-
-    echo "Opening app..."
-
-    if [[ "$package" == *roblox* ]] && [ -n "$url" ]; then
-        su -c "am start -a android.intent.action.VIEW -d '$url' -p '$package'"
-    else
-        su -c "monkey -p $package 1"
-    fi
-
-    sleep 20
-}
-
-# ตรวจสอบทีละ Package
-monitor_packages() {
-    local packages="$1"
-    local url="$2"
-
-    while IFS= read -r package; do
-        [ -z "$package" ] && continue
-
-        clear
-        echo "===== CURRENT PACKAGE ====="
-        echo "$package"
-
-        open_one "$package" "$url"
-
-        local failures=0
-
-        while true; do
-            clear
-            echo "===== PACKAGE MONITOR ====="
-            echo "Package: $package"
-
-            status=$(check_game "$package")
-            echo "Status: $status"
-
-            if [ "$status" = "IN_GAME" ]; then
-                failures=0
-            else
-                failures=$((failures + 1))
-                echo "Checking: $failures/10"
-            fi
-
-            show_status "$packages"
-
-            if [ "$failures" -ge 10 ]; then
-                echo
-                echo "Status timeout."
-                echo "This package needs attention."
-                echo "Stopping automatic retry for safety."
-                break
-            fi
+        for file in "$LOG_DIR"/*.log; do
+            [ -f "$file" ] || continue
 
             echo
-            echo "Press CTRL+C to stop"
-            sleep 3
+            echo "FILE: $(basename "$file")"
+            tail -n 15 "$file"
         done
+    fi
 
-    done <<< "$packages"
-}
-
-# สร้าง API ตัวอย่าง
-create_api() {
-    mkdir -p "$AUTO"
-
-    cat > "$AUTO/api.lua" <<'LUA'
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
-
--- ต้องกำหนดไฟล์ให้ตรงกับ Package ID
--- ห้ามใช้ไฟล์สถานะร่วมกันระหว่างหลายแอป
-
-local STATUS_FILE = "status.txt"
-
-while true do
-    local character = player.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-
-    local status = "NOT_IN_GAME"
-
-    if humanoid and root and humanoid.Health > 0 then
-        status = "IN_GAME"
-    end
-
-    writefile(
-        STATUS_FILE,
-        status .. "\n" .. os.time()
-    )
-
-    task.wait(3)
-end
-LUA
-
-    echo "Created: $AUTO/api.lua"
-    echo "Configure separate STATUS_FILE paths for each executor."
+    echo
+    read -r -p "Press Enter..."
 }
 
 # เมนูหลัก
@@ -198,16 +264,16 @@ while true; do
     echo "================================"
     echo -e "${RESET}"
 
-    echo "[1] Open Roblox Sequential"
+    echo "[1] Open / Restart All Packages"
     echo "[2] Set Game Link"
-    echo "[3] Setup Executor"
-    echo "[4] Check All Status"
-    echo "[5] Exit"
+    echo "[3] View Package Logs"
+    echo "[4] Exit"
 
     echo
     read -r -p "Select: " choice
 
     case "$choice" in
+
         1)
             if ! check_root; then
                 read -r -p "Press Enter..."
@@ -222,43 +288,32 @@ while true; do
                 continue
             fi
 
-            url=""
-            [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
+            echo
+            echo "FOUND PACKAGES:"
+            echo "$packages"
 
-            monitor_packages "$packages" "$url"
-            read -r -p "Press Enter..."
-            ;;
+            echo
+            read -r -p "Start sequentially? (y/n): " confirm
 
-        2)
-            read -r -p "Enter Game ID or Link: " game
-
-            if [[ "$game" =~ ^[0-9]+$ ]]; then
-                url="roblox://experiences/start?placeId=$game"
-            elif [[ "$game" == http://* || "$game" == https://* ]]; then
-                url="$game"
-            else
-                echo "Invalid Game ID or Link."
-                read -r -p "Press Enter..."
+            if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
                 continue
             fi
 
-            echo "$url" > "$CONFIG"
-            echo "Game Link saved."
-            read -r -p "Press Enter..."
+            url=""
+            [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
+
+            run_all "$packages" "$url"
+            ;;
+
+        2)
+            set_link
             ;;
 
         3)
-            create_api
-            read -r -p "Press Enter..."
+            view_logs
             ;;
 
         4)
-            packages=$(get_packages)
-            show_status "$packages"
-            read -r -p "Press Enter..."
-            ;;
-
-        5)
             exit 0
             ;;
 
@@ -266,5 +321,6 @@ while true; do
             echo "Invalid option."
             sleep 1
             ;;
+
     esac
 done
