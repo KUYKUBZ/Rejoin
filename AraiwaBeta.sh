@@ -1,17 +1,20 @@
-
 #!/data/data/com.termux/files/usr/bin/bash
+
+clear
 
 AUTO="/storage/emulated/0/Delta/Autoexecute"
 CONFIG="$HOME/.rejoin_link"
 STATUS="$HOME/status.txt"
 
+# Find Roblox packages
 get_packages() {
-    pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
+  pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
 }
 
+# Check if package has a Task
 has_task() {
-    /system/bin/dumpsys activity recents |
-        grep -F "A=$1 " >/dev/null
+  /system/bin/dumpsys activity recents |
+    grep -F "A=$1 " >/dev/null
 }
 
 check_game() {
@@ -64,142 +67,150 @@ LUA
     echo "Created: $AUTO/api.lua"
 }
 
-# Force stop package
-force_stop() {
-    package="$1"
+while true; do
 
-    echo -e "${YELLOW}[FORCE STOP]${RESET} $package"
+clear
 
-    if su -c "am force-stop '$package'"; then
-        echo -e "${GREEN}[STOP OK]${RESET} $package"
-        return 0
-    else
-        echo -e "${RED}[STOP ERROR]${RESET} $package"
-        return 1
-    fi
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+YELLOW='\033[1;33m'
+RESET='\033[0m'
+
+# Detect screen width
+WIDTH=$(tput cols 2>/dev/null)
+[[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
+[ "$WIDTH" -lt 10 ] && WIDTH=10
+[ "$WIDTH" -gt 50 ] && WIDTH=50
+
+INNER=$((WIDTH - 2))
+
+# Draw border
+border() {
+    printf "${CYAN}+"
+    printf '%*s' "$INNER" '' | tr ' ' '-'
+    printf "+${RESET}\n"
 }
 
-# Open package
-open_package() {
-    package="$1"
-    url="$2"
+# Draw text without overflowing
+line() {
+    printf "${CYAN}|${RESET}"
+    printf "%-*.*s" "$INNER" "$INNER" "$1"
+    printf "${CYAN}|${RESET}\n"
+}
 
-    force_stop "$package"
+clear
+border
+line ""
+line "       A r i w a a"
+line ""
+border
+line ""
+line " [1] Open Roblox"
+line " [2] Set Game Link"
+line " [3] Setup Executor"
+line " [4] Exit"
+line ""
+border
 
-    sleep 2
+printf "\n${YELLOW}Select: ${WHITE}"
+read -r choice
 
-    echo "[OPENING] $package"
 
-    if [ -n "$url" ]; then
-        am start -a android.intent.action.VIEW \
+  case "$choice" in
+    1)
+      packages=$(get_packages)
+
+      if [ -z "$packages" ]; then
+        echo "No Roblox apps found."
+        read -r -p "Press Enter..."
+        continue
+      fi
+
+      url=""
+      [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
+
+      for package in $packages; do
+        echo "Opening $package"
+
+        if [ -n "$url" ]; then
+          am start -a android.intent.action.VIEW \
             -d "$url" -p "$package"
-    else
-        am start -a android.intent.action.MAIN \
+        else
+          am start -a android.intent.action.MAIN \
             -c android.intent.category.LAUNCHER \
             -p "$package"
-    fi
+        fi
 
-    sleep 10
-}
+        sleep 20
+      done
 
-while true; do
-    clear
+      while true; do
+        for package in $packages; do
+          if has_task "$package"; then
+            :
+          else
+            echo "[Task Not Found] Reopening $package"
 
-    CYAN='\033[1;36m'
-    WHITE='\033[1;37m'
-    YELLOW='\033[1;33m'
-    RESET='\033[0m'
-
-    WIDTH=$(tput cols 2>/dev/null)
-    [[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
-    [ "$WIDTH" -lt 10 ] && WIDTH=10
-    [ "$WIDTH" -gt 50 ] && WIDTH=50
-
-    INNER=$((WIDTH - 2))
-
-    border() {
-        printf "${CYAN}+"
-        printf '%*s' "$INNER" '' | tr ' ' '-'
-        printf "+${RESET}\n"
-    }
-
-    line() {
-        printf "${CYAN}|${RESET}"
-        printf "%-*.*s" "$INNER" "$INNER" "$1"
-        printf "${CYAN}|${RESET}\n"
-    }
-
-    border
-    line "       A r i w a a"
-    border
-    line ""
-    line " [1] Open Roblox"
-    line " [2] Set Game Link"
-    line " [3] Setup Executor"
-    line " [4] Exit"
-    line ""
-    border
-
-    printf "\n${YELLOW}Select: ${WHITE}"
-    read -r choice
-
-    case "$choice" in
-        1)
-            packages=$(get_packages)
-
-            if [ -z "$packages" ]; then
-                echo "No Roblox apps found."
-                read -r -p "Press Enter..."
-                continue
-            fi
-
-            url=""
-            [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
-
-            for package in $packages; do
-                if [ -n "$url" ]; then
-                    open_package "$package" "$url"
-                fi
-                sleep 20
-            done
-
-            while true; do
-                clear
-                check_game
-                sleep 3
-            done
-            ;;
-
-        2)
-            read -r -p "Enter Game ID or Link: " game
-
-            if [[ "$game" =~ ^[0-9]+$ ]]; then
-                url="roblox://experiences/start?placeId=$game"
-            elif [[ "$game" == * ]]; then
-                url="$game"
+            if [ -n "$url" ]; then
+              am start -a android.intent.action.VIEW \
+                -d "$url" -p "$package"
             else
-                echo "Invalid Game ID or Link."
-                read -r -p "Press Enter..."
-                continue
+              am start -a android.intent.action.MAIN \
+                -c android.intent.category.LAUNCHER \
+                -p "$package"
             fi
 
-            echo "$url" > "$CONFIG"
-            echo "Link saved successfully!"
-            read -r -p "Press Enter..."
-            ;;
+            sleep 10
+          fi
+        done
 
-        3)
-            create_api
-            read -r -p "Press Enter..."
-            ;;
+        sleep 5
+      done
 
-        4)
-            exit 0
-            ;;
+      while true; do
+        for package in $packages; do
+            if check_game; then
+            :
+            else
+                am start -a android.intent.action.VIEW \ -d "$url" -p "$package"
+            else
+              am start -a android.intent.action.MAIN \ -c android.intent.category.LAUNCHER \ -p "$package"
+            fi
+        done
+        sleep
+      done
+      ;;
 
-        *)
-            echo "Invalid option."
-            sleep 1
-            ;;
-    esac
+    2)
+      read -r -p "Enter Game ID or Link: " game
+
+      if [[ "$game" =~ ^[0-9]+$ ]]; then
+        url="roblox://experiences/start?placeId=$game"
+      elif [[ "$game" == http://* || "$game" == https://* ]]; then
+        url="$game"
+      else
+        echo "Invalid Game Id or Link."
+        read -r -p "Press Enter..."
+        continue
+      fi
+
+      echo "$url" > "$CONFIG"
+      echo "Link saved successfully!"
+      read -r -p "Press Enter to return to menu..."
+      ;;
+
+    3)
+      create_api
+      read -r -p "Press Enter..."
+      ;;
+
+    4)
+      exit 0
+      ;;
+
+    *)
+      echo "Invalid option."
+      sleep 1
+      ;;
+  esac
 done
