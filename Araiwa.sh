@@ -1,5 +1,6 @@
-clear
 #!/data/data/com.termux/files/usr/bin/bash
+
+clear
 
 CONFIG="$HOME/.rejoin_link"
 
@@ -95,7 +96,7 @@ read -r choice
       while true; do
         for package in $packages; do
           if has_task "$package"; then
-            echo "[Running] $package"
+            :
           else
             echo "[Task Not Found] Reopening $package"
 
