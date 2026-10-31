@@ -4,7 +4,13 @@
 clear
 
 AUTO="/storage/emulated/0/Delta/Autoexecute"
+API="$AUTO/api.lua"
+HEARTBEAT="$AUTO/heartbeat.txt"
 CONFIG="$HOME/.rejoin_link"
+
+TIMEOUT=120
+CHECK_INTERVAL=5
+MAX_AGE=30
 
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
@@ -13,7 +19,10 @@ GREEN='\033[1;32m'
 RED='\033[1;31m'
 RESET='\033[0m'
 
+# =================================
 # Find Roblox packages
+# =================================
+
 get_packages() {
     pm list packages |
         grep -Ei 'roblox|delt' |
@@ -21,125 +30,42 @@ get_packages() {
         sort -u
 }
 
-# Check process
-is_running() {
-    pidof "$1" >/dev/null 2>&1
-}
+# =================================
+# Create Lua API
+# =================================
 
-# Open Roblox
-open_package() {
-    local package="$1"
-    local url="$2"
-
-    echo -e "${CYAN}[OPEN] $package${RESET}"
-
-    if [ -n "$url" ]; then
-        am start -a android.intent.action.VIEW \
-            -d "$url" -p "$package"
-    else
-        monkey -p "$package" 1
-    fi
-}
-
-# Force stop
-stop_package() {
-    local package="$1"
-
-    echo -e "${RED}[STOP] $package${RESET}"
-
-    su -c "am force-stop '$package'"
-
-    sleep 3
-}
-
-# Wait for process
-wait_for_game() {
-    local package="$1"
-    local timeout=120
-    local elapsed=0
-
-    echo -e "${YELLOW}[WAIT] Checking process...${RESET}"
-
-    while [ "$elapsed" -lt "$timeout" ]; do
-
-        if is_running "$package"; then
-            echo -e "${GREEN}[PROCESS DETECTED]${RESET}"
-            return 0
-        fi
-
-        sleep 2
-        elapsed=$((elapsed + 2))
-
-        printf "\r[WAIT] %s/%s seconds" "$elapsed" "$timeout"
-    done
-
-    echo
-    return 1
-}
-
-# Auto Rejoin
-auto_rejoin() {
-    local package="$1"
-    local url="$2"
-    local attempt=0
-
-    while true; do
-        attempt=$((attempt + 1))
-
-        echo
-        echo "[ATTEMPT $attempt]"
-        echo "[PACKAGE] $package"
-
-        open_package "$package" "$url"
-
-        if wait_for_game "$package"; then
-            echo -e "${GREEN}[APP RUNNING]${RESET}"
-            echo "Lua checker will verify character readiness."
-            return 0
-        fi
-
-        echo -e "${RED}[NOT RUNNING] Restarting...${RESET}"
-
-        stop_package "$package"
-        sleep 2
-    done
-}
-
-# Create API file
 create_api() {
 
-    echo -e "${YELLOW}[CREATE] GameChecker API${RESET}"
+    mkdir -p "$AUTO" || return 1
 
-    mkdir -p "$AUTO"
-
-    if [ ! -d "$AUTO" ]; then
-        echo -e "${RED}[ERROR] Cannot create Autoexecute folder${RESET}"
-        return 1
-    fi
-
-    cat > "$AUTO/api.lua" <<'LUA'
+    cat > "$API" <<'LUA'
 -- =================================
--- Roblox Game Checker API
+-- ARIWAA GAME WATCHDOG API
 -- Delta Auto Execute
 -- =================================
 
-local Players = game:GetService("Players")
+local HEARTBEAT =
+    "/storage/emulated/0/Delta/Autoexecute/heartbeat.txt"
+
+local HttpService = game:GetService("HttpService")
 
 local function log(message)
-    print("[GAME API] " .. tostring(message))
+    print("[ARIWAA API] " .. tostring(message))
 end
 
-log("Starting API...")
+log("API STARTING")
 
 -- Wait for game loading
 if not game:IsLoaded() then
-    log("Waiting for game loading...")
+    log("WAITING FOR GAME")
+
     game.Loaded:Wait()
 end
 
-log("Game loaded")
+log("GAME LOADED")
 
 -- Wait for player
+local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
 while not player do
@@ -147,63 +73,229 @@ while not player do
     player = Players.LocalPlayer
 end
 
-log("Player detected: " .. player.Name)
+log("PLAYER DETECTED")
 
--- Wait for character
-local character = player.Character
+-- Heartbeat
+local function sendHeartbeat()
 
-if not character then
-    log("Waiting for character...")
-    character = player.CharacterAdded:Wait()
-end
+    local success, err = pcall(function()
 
--- Check character readiness
-local function checkCharacter(char)
+        writefile(HEARTBEAT, tostring(os.time()))
 
-    log("Checking character...")
+    end)
 
-    local humanoid = char:WaitForChild("Humanoid", 120)
-    local root = char:WaitForChild("HumanoidRootPart", 120)
-
-    if humanoid and root then
-        log("================================")
-        log("IN GAME")
-        log("Player: " .. player.Name)
-        log("Place ID: " .. game.PlaceId)
-        log("Job ID: " .. game.JobId)
-        log("Character Ready")
-        log("================================")
-        return true
+    if not success then
+        warn("[ARIWAA API] WRITE ERROR: " .. tostring(err))
     end
 
-    log("CHARACTER NOT READY")
-    return false
+    return success
 end
 
-checkCharacter(character)
+-- Initial heartbeat
+if not sendHeartbeat() then
+    log("HEARTBEAT FAILED")
+else
+    log("HEARTBEAT STARTED")
+end
 
--- Detect respawn
-player.CharacterAdded:Connect(function(newCharacter)
-    log("Character respawned")
-    checkCharacter(newCharacter)
-end)
+-- Continuous heartbeat
+while true do
 
-log("Game Checker API running")
+    task.wait(5)
+
+    if not sendHeartbeat() then
+        warn("[ARIWAA API] HEARTBEAT FAILED")
+    end
+
+end
 LUA
 
-    if [ -s "$AUTO/api.lua" ]; then
-        echo
-        echo -e "${GREEN}[SUCCESS] API created!${RESET}"
-        echo "File: $AUTO/api.lua"
-    else
-        echo -e "${RED}[ERROR] File creation failed${RESET}"
-        return 1
+    if [ -s "$API" ]; then
+        echo -e "${GREEN}[SUCCESS] API CREATED${RESET}"
+        echo "$API"
+        return 0
     fi
 
-    read -r -p "Press Enter to return..."
+    echo -e "${RED}[ERROR] API CREATION FAILED${RESET}"
+    return 1
 }
 
-# Main menu
+# =================================
+# Check heartbeat
+# =================================
+
+check_heartbeat() {
+
+    [ -f "$HEARTBEAT" ] || return 1
+
+    local beat
+    local now
+    local age
+
+    beat=$(cat "$HEARTBEAT" 2>/dev/null)
+
+    [[ "$beat" =~ ^[0-9]+$ ]] || return 1
+
+    now=$(date +%s)
+    age=$((now - beat))
+
+    (( age >= 0 && age <= MAX_AGE ))
+}
+
+# =================================
+# Open Roblox
+# =================================
+
+open_package() {
+
+    local package="$1"
+    local url="$2"
+
+    echo -e "${CYAN}[OPEN] $package${RESET}"
+
+    if [ -n "$url" ]; then
+
+        am start \
+            -a android.intent.action.VIEW \
+            -d "$url" \
+            -p "$package"
+
+    else
+
+        monkey -p "$package" 1
+
+    fi
+}
+
+# =================================
+# Force Stop
+# =================================
+
+stop_package() {
+
+    local package="$1"
+
+    echo -e "${RED}[FORCE STOP] $package${RESET}"
+
+    su -c "am force-stop '$package'"
+
+    sleep 3
+}
+
+# =================================
+# Wait for API
+# =================================
+
+wait_for_api() {
+
+    local elapsed=0
+
+    echo -e "${YELLOW}[WAIT] Waiting for Lua API...${RESET}"
+
+    while [ "$elapsed" -lt "$TIMEOUT" ]; do
+
+        if check_heartbeat; then
+
+            echo
+            echo -e "${GREEN}[API RUNNING] Heartbeat detected${RESET}"
+
+            return 0
+        fi
+
+        printf "\r${YELLOW}[WAIT] %s/%s seconds${RESET}" \
+            "$elapsed" "$TIMEOUT"
+
+        sleep "$CHECK_INTERVAL"
+
+        elapsed=$((elapsed + CHECK_INTERVAL))
+
+    done
+
+    echo
+    echo -e "${RED}[TIMEOUT] API NOT DETECTED${RESET}"
+
+    return 1
+}
+
+# =================================
+# Monitor API
+# =================================
+
+monitor_api() {
+
+    while true; do
+
+        sleep "$CHECK_INTERVAL"
+
+        if check_heartbeat; then
+
+            echo -e "${GREEN}[RUNNING] Lua API OK${RESET}"
+
+        else
+
+            echo
+            echo -e "${RED}[API STOPPED] Heartbeat lost${RESET}"
+
+            return 1
+
+        fi
+
+    done
+}
+
+# =================================
+# Auto Rejoin
+# =================================
+
+auto_rejoin() {
+
+    local package="$1"
+    local url="$2"
+    local attempt=0
+
+    while true; do
+
+        attempt=$((attempt + 1))
+
+        echo
+        echo -e "${CYAN}==============================${RESET}"
+        echo "[ATTEMPT $attempt]"
+        echo "[PACKAGE] $package"
+        echo -e "${CYAN}==============================${RESET}"
+
+        # Remove old heartbeat
+        rm -f "$HEARTBEAT"
+
+        # Open Roblox
+        open_package "$package" "$url"
+
+        # Wait for Lua API
+        if wait_for_api; then
+
+            echo -e "${GREEN}[API CONNECTED]${RESET}"
+
+            # Monitor heartbeat
+            if monitor_api; then
+                continue
+            fi
+
+        fi
+
+        # API missing or stopped
+        echo
+        echo -e "${RED}[RESTART] Restarting Roblox${RESET}"
+
+        stop_package "$package"
+
+        sleep 2
+
+    done
+}
+
+# =================================
+# Main Menu
+# =================================
+
 while true; do
 
     clear
@@ -218,19 +310,59 @@ while true; do
     echo -e "${CYAN}+--------------------------------+${RESET}"
 
     echo
-    printf "${YELLOW}Select: ${WHITE}"
-    read -r choice
+    read -r -p "Select: " choice
 
     case "$choice" in
 
         1)
+
+            if [ ! -f "$API" ]; then
+
+                echo "[API] Creating API..."
+                create_api || {
+                    read -r -p "Press Enter..."
+                    continue
+                }
+
+            fi
+
             packages=$(get_packages)
 
             if [ -z "$packages" ]; then
-                echo -e "${RED}No Roblox apps found.${RESET}"
+
+                echo -e "${RED}No Roblox packages found${RESET}"
                 read -r -p "Press Enter..."
                 continue
+
             fi
+
+            package_list=()
+
+            while IFS= read -r package; do
+                [ -n "$package" ] && package_list+=("$package")
+            done <<< "$packages"
+
+            echo
+            echo "Available packages:"
+
+            for i in "${!package_list[@]}"; do
+                echo "[$((i + 1))] ${package_list[$i]}"
+            done
+
+            echo
+            read -r -p "Select package number: " number
+
+            if ! [[ "$number" =~ ^[0-9]+$ ]] ||
+                [ "$number" -lt 1 ] ||
+                [ "$number" -gt "${#package_list[@]}" ]; then
+
+                echo -e "${RED}Invalid package${RESET}"
+                sleep 2
+                continue
+
+            fi
+
+            selected="${package_list[$((number - 1))]}"
 
             url=""
 
@@ -238,50 +370,58 @@ while true; do
                 url=$(cat "$CONFIG")
             fi
 
-            echo
-            echo "Found packages:"
-            echo "$packages"
+            auto_rejoin "$selected" "$url"
 
-            for package in $packages; do
-                auto_rejoin "$package" "$url"
-            done
-
-            read -r -p "Press Enter to return..."
             ;;
 
         2)
+
             read -r -p "Enter Game ID or Link: " game
 
             if [[ "$game" =~ ^[0-9]+$ ]]; then
+
                 url="roblox://experiences/start?placeId=$game"
 
             elif [[ "$game" == http://* ||
                     "$game" == https://* ]]; then
+
                 url="$game"
 
             else
-                echo -e "${RED}Invalid Game ID or Link.${RESET}"
+
+                echo -e "${RED}Invalid Game ID or Link${RESET}"
                 read -r -p "Press Enter..."
                 continue
+
             fi
 
             echo "$url" > "$CONFIG"
 
-            echo -e "${GREEN}Game Link saved!${RESET}"
+            echo -e "${GREEN}[SAVED] Game Link saved${RESET}"
+
             read -r -p "Press Enter..."
+
             ;;
 
         3)
+
             exit 0
+
             ;;
 
         4)
+
             create_api
+
+            read -r -p "Press Enter to return..."
+
             ;;
 
         *)
-            echo -e "${RED}Invalid option.${RESET}"
+
+            echo "Invalid option"
             sleep 1
+
             ;;
 
     esac
