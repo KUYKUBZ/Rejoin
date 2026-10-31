@@ -172,9 +172,14 @@ read -r choice
             if check_game; then
             :
             else
-                am start -a android.intent.action.VIEW \ -d "$url" -p "$package"
-            else
-              am start -a android.intent.action.MAIN \ -c android.intent.category.LAUNCHER \ -p "$package"
+                if [ -n "$url" ]; then
+                am start -a android.intent.action.VIEW \
+                    -d "$url" -p "$package"
+                else
+                am start -a android.intent.action.MAIN \
+                    -c android.intent.category.LAUNCHER \
+                    -p "$package"
+                fi
             fi
         done
         sleep
