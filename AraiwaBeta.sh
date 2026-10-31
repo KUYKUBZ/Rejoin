@@ -3,16 +3,35 @@
 
 AUTO="/storage/emulated/0/Delta/Autoexecute"
 CONFIG="$HOME/.rejoin_link"
-STATUS_DIR="$HOME/game_status"
+STATUS_DIR="$HOME/rejoin_status"
+
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+YELLOW='\033[1;33m'
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+RESET='\033[0m'
 
 mkdir -p "$STATUS_DIR"
 
+# ตรวจสอบ Root
+check_root() {
+    if ! su -c id 2>/dev/null | grep -q 'uid=0'; then
+        echo -e "${RED}Root permission unavailable!${RESET}"
+        return 1
+    fi
+    return 0
+}
+
+# ค้นหา Package ID
 get_packages() {
     pm list packages |
         grep -Ei 'roblox|delt' |
-        sed 's/package://'
+        sed 's/package://' |
+        sort -u
 }
 
+# ตรวจสอบสถานะแยกตาม Package
 check_game() {
     local package="$1"
     local file="$STATUS_DIR/$package.txt"
@@ -37,36 +56,113 @@ check_game() {
     fi
 }
 
-restart_app() {
+# แสดงสถานะทั้งหมด
+show_status() {
+    local packages="$1"
+
+    echo "========== PACKAGE STATUS =========="
+
+    while IFS= read -r package; do
+        [ -z "$package" ] && continue
+
+        status=$(check_game "$package")
+
+        if [ "$status" = "IN_GAME" ]; then
+            echo -e "$package : ${GREEN}$status${RESET}"
+        else
+            echo -e "$package : ${RED}$status${RESET}"
+        fi
+    done <<< "$packages"
+
+    echo "===================================="
+}
+
+# เปิดแอปทีละตัว
+open_one() {
     local package="$1"
     local url="$2"
 
-    echo "Trying to close: $package"
+    echo
+    echo "Package: $package"
 
-    if /system/bin/am force-stop "$package" 2>/dev/null; then
-        echo "Close command sent."
+    echo "Stopping app..."
+
+    su -c "am force-stop $package"
+
+    sleep 2
+
+    echo "Opening app..."
+
+    if [[ "$package" == *roblox* ]] && [ -n "$url" ]; then
+        su -c "am start -a android.intent.action.VIEW -d '$url' -p '$package'"
     else
-        echo "Android did not allow closing the app."
+        su -c "monkey -p $package 1"
     fi
 
-    sleep 3
-
-    echo "Opening: $package"
-
-    if [ -n "$url" ]; then
-        am start -a android.intent.action.VIEW \
-            -d "$url" -p "$package"
-    else
-        monkey -p "$package" 1
-    fi
+    sleep 20
 }
 
+# ตรวจสอบทีละ Package
+monitor_packages() {
+    local packages="$1"
+    local url="$2"
+
+    while IFS= read -r package; do
+        [ -z "$package" ] && continue
+
+        clear
+        echo "===== CURRENT PACKAGE ====="
+        echo "$package"
+
+        open_one "$package" "$url"
+
+        local failures=0
+
+        while true; do
+            clear
+            echo "===== PACKAGE MONITOR ====="
+            echo "Package: $package"
+
+            status=$(check_game "$package")
+            echo "Status: $status"
+
+            if [ "$status" = "IN_GAME" ]; then
+                failures=0
+            else
+                failures=$((failures + 1))
+                echo "Checking: $failures/10"
+            fi
+
+            show_status "$packages"
+
+            if [ "$failures" -ge 10 ]; then
+                echo
+                echo "Status timeout."
+                echo "This package needs attention."
+                echo "Stopping automatic retry for safety."
+                break
+            fi
+
+            echo
+            echo "Press CTRL+C to stop"
+            sleep 3
+        done
+
+    done <<< "$packages"
+}
+
+# สร้าง API ตัวอย่าง
 create_api() {
     mkdir -p "$AUTO"
 
     cat > "$AUTO/api.lua" <<'LUA'
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
+
+-- ต้องกำหนดไฟล์ให้ตรงกับ Package ID
+-- ห้ามใช้ไฟล์สถานะร่วมกันระหว่างหลายแอป
+
+local STATUS_FILE = "status.txt"
 
 while true do
     local character = player.Character
@@ -79,44 +175,57 @@ while true do
         status = "IN_GAME"
     end
 
-    writefile("status.txt", status .. "\n" .. os.time())
+    writefile(
+        STATUS_FILE,
+        status .. "\n" .. os.time()
+    )
+
     task.wait(3)
 end
 LUA
 
     echo "Created: $AUTO/api.lua"
+    echo "Configure separate STATUS_FILE paths for each executor."
 }
 
+# เมนูหลัก
 while true; do
     clear
 
-    echo "========== ARIWAA =========="
-    echo
-    echo "[1] Open Roblox apps"
+    echo -e "${CYAN}"
+    echo "================================"
+    echo "          A R I W A A"
+    echo "================================"
+    echo -e "${RESET}"
+
+    echo "[1] Open Roblox Sequential"
     echo "[2] Set Game Link"
     echo "[3] Setup Executor"
-    echo "[4] Check Each App"
-    echo "[5] Monitor Each App"
-    echo "[6] Exit"
-    echo
+    echo "[4] Check All Status"
+    echo "[5] Exit"
 
+    echo
     read -r -p "Select: " choice
 
     case "$choice" in
         1)
+            if ! check_root; then
+                read -r -p "Press Enter..."
+                continue
+            fi
+
             packages=$(get_packages)
+
+            if [ -z "$packages" ]; then
+                echo "No packages found."
+                read -r -p "Press Enter..."
+                continue
+            fi
+
             url=""
             [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
-            if [ -z "$packages" ]; then
-                echo "No Roblox apps found."
-            else
-                for package in $packages; do
-                    restart_app "$package" "$url"
-                    sleep 20
-                done
-            fi
-
+            monitor_packages "$packages" "$url"
             read -r -p "Press Enter..."
             ;;
 
@@ -134,7 +243,7 @@ while true; do
             fi
 
             echo "$url" > "$CONFIG"
-            echo "Link saved successfully!"
+            echo "Game Link saved."
             read -r -p "Press Enter..."
             ;;
 
@@ -145,67 +254,11 @@ while true; do
 
         4)
             packages=$(get_packages)
-            clear
-            echo "===== EACH APP STATUS ====="
-
-            for package in $packages; do
-                printf "%s : " "$package"
-                check_game "$package"
-            done
-
+            show_status "$packages"
             read -r -p "Press Enter..."
             ;;
 
         5)
-            packages=$(get_packages)
-            url=""
-            [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
-
-            if [ -z "$packages" ]; then
-                echo "No Roblox apps found."
-                read -r -p "Press Enter..."
-                continue
-            fi
-
-            declare -A failures
-
-            for package in $packages; do
-                failures["$package"]=0
-            done
-
-            while true; do
-                clear
-                echo "===== MONITOR EACH APP ====="
-
-                for package in $packages; do
-                    status=$(check_game "$package")
-
-                    echo
-                    echo "$package : $status"
-
-                    if [ "$status" = "IN_GAME" ]; then
-                        failures["$package"]=0
-                    else
-                        failures["$package"]=$((failures["$package"] + 1))
-
-                        echo "Checking ${failures[$package]}/10"
-
-                        if [ "${failures[$package]}" -ge 10 ]; then
-                            echo
-                            echo "Game disconnected!"
-                            restart_app "$package" "$url"
-                            failures["$package"]=0
-                        fi
-                    fi
-                done
-
-                echo
-                echo "Press CTRL+C to stop monitoring"
-                sleep 3
-            done
-            ;;
-
-        6)
             exit 0
             ;;
 
