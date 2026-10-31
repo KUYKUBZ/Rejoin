@@ -3,12 +3,12 @@
 
 CONFIG="$HOME/.rejoin_link"
 
-# ตรวจสอบแพ็กเกจ Roblox
+# Find Roblox packages
 get_packages() {
   pm list packages | grep -i 'roblox' | sed 's/package://'
 }
 
-# ตรวจสอบว่าแพ็กเกจมี Task หรือไม่
+# Check if package has a Task
 has_task() {
   /system/bin/dumpsys activity recents |
     grep -F "A=$1 " >/dev/null
@@ -18,20 +18,20 @@ while true; do
   clear
   echo "-----------------"
   echo "|    Rejoin     |"
-  echo "| [1] open      |"
-  echo "| [2] set link  |"
-  echo "| [3] exit      |"
+  echo "| [1] Open      |"
+  echo "| [2] Set Link  |"
+  echo "| [3] Exit      |"
   echo "-----------------"
 
-  read -r -p "select: " choice
+  read -r -p "Select: " choice
 
   case "$choice" in
     1)
       packages=$(get_packages)
 
       if [ -z "$packages" ]; then
-        echo "ไม่พบแอป Roblox"
-        read -r -p "กด Enter..."
+        echo "No Roblox apps found."
+        read -r -p "Press Enter..."
         continue
       fi
 
@@ -39,7 +39,7 @@ while true; do
       [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
       for package in $packages; do
-        echo "กำลังเปิด $package"
+        echo "Opening $package"
 
         if [ -n "$url" ]; then
           am start -a android.intent.action.VIEW \
@@ -53,13 +53,14 @@ while true; do
         sleep 10
       done
 
-      echo "เริ่มตรวจสอบ Task..."
+      echo "Starting Task monitor..."
+
       while true; do
         for package in $packages; do
           if has_task "$package"; then
-            echo "[เปิดอยู่] $package"
+            echo "[Running] $package"
           else
-            echo "[ไม่พบ Task] กำลังเปิด $package"
+            echo "[Task Not Found] Reopening $package"
 
             if [ -n "$url" ]; then
               am start -a android.intent.action.VIEW \
@@ -79,21 +80,21 @@ while true; do
       ;;
 
     2)
-      read -r -p "ใส่ Game ID หรือ Link: " game
+      read -r -p "Enter Game ID or Link: " game
 
       if [[ "$game" =~ ^[0-9]+$ ]]; then
         url="https://www.roblox.com/games/$game"
       elif [[ "$game" == http://* || "$game" == https://* ]]; then
         url="$game"
       else
-        echo "Game ID หรือ Link ไม่ถูกต้อง"
-        read -r -p "กด Enter..."
+        echo "Invalid Game ID or Link."
+        read -r -p "Press Enter..."
         continue
       fi
 
       echo "$url" > "$CONFIG"
-      echo "บันทึกลิงก์เรียบร้อยแล้ว!"
-      read -r -p "กด Enter เพื่อกลับเมนู..."
+      echo "Link saved successfully!"
+      read -r -p "Press Enter to return to menu..."
       ;;
 
     3)
@@ -101,7 +102,7 @@ while true; do
       ;;
 
     *)
-      echo "เลือกเมนูไม่ถูกต้อง"
+      echo "Invalid option."
       sleep 1
       ;;
   esac
