@@ -49,7 +49,7 @@ line() {
 clear
 border
 line ""
-line "       A r i w a a"
+line "       A r a i w a"
 line ""
 border
 line ""
