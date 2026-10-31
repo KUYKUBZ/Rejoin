@@ -44,7 +44,8 @@ while true; do
             -p "$package"
         fi
 
-        sleep 3
+        clear
+        sleep 10
       done
 
       echo "เริ่มตรวจสอบ Roblox..."
