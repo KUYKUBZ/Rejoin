@@ -124,7 +124,7 @@ read -r choice
       elif [[ "$game" == http://* || "$game" == https://* ]]; then
         url="$game"
       else
-        echo "Invalid Game ID or Link."
+        echo "Invalid Game Link."
         read -r -p "Press Enter..."
         continue
       fi
