@@ -30,14 +30,14 @@ echo "║          A r i w a a         ║"
 echo "║                              ║"
 echo "╠══════════════════════════════╣"
 echo "║                              ║"
-echo "║  ${WHITE}[1]${CYAN}  Open Roblox              ║"
-echo "║  ${WHITE}[2]${CYAN}  Set Game Link             ║"
-echo "║  ${WHITE}[3]${CYAN}  Exit                      ║"
+echo -e "║  ${WHITE}[1]${CYAN} Open Roblox               ║"
+echo -e "║  ${WHITE}[2]${CYAN} Set Game Link              ║"
+echo -e "║  ${WHITE}[3]${CYAN} Exit                       ║"
 echo "║                              ║"
 echo "╚══════════════════════════════╝"
 echo -e "${RESET}"
 
-echo -ne "${YELLOW} Select an option ${WHITE}➜ ${RESET}"
+echo -ne "${YELLOW}Select an option ${WHITE}➜ ${RESET}"
 read -r choice
 
   case "$choice" in
