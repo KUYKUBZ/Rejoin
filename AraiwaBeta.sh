@@ -39,9 +39,10 @@ load_config() {
 # ==========================================
 
 get_packages() {
-    pm list packages |
+    pm list packages 2>/dev/null |
         sed 's/package://' |
-        grep -Ei 'roblox|delt'
+        grep -Ei 'roblox|delt' |
+        sort -u
 }
 
 # ==========================================
@@ -51,7 +52,29 @@ get_packages() {
 is_running() {
     local package="$1"
 
-    /system/bin/pidof "$package" >/dev/null 2>&1
+    # Method 1: PIDOF
+    if /system/bin/pidof "$package" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Method 2: PS PROCESS LIST
+    if ps -A 2>/dev/null |
+        awk -v pkg="$package" '
+        NR > 1 {
+            name = $NF
+
+            if (name == pkg || index(name, pkg ":") == 1) {
+                found = 1
+            }
+        }
+        END {
+            exit !found
+        }'
+    then
+        return 0
+    fi
+
+    return 1
 }
 
 # ==========================================
@@ -64,12 +87,16 @@ open_package() {
     echo -e "${GREEN}[OPEN] $package${RESET}"
 
     if [ -n "$GAME_URL" ]; then
+
         am start \
             -a android.intent.action.VIEW \
             -d "$GAME_URL" \
             -p "$package"
+
     else
-        monkey -p "$package" 1 >/dev/null 2>&1
+
+        monkey -p "$package" 1
+
     fi
 }
 
@@ -91,7 +118,7 @@ restart_package() {
 
     open_package "$package"
 
-    return 0
+    return $?
 }
 
 # ==========================================
@@ -101,6 +128,9 @@ restart_package() {
 start_watchdog() {
 
     local packages
+    local package
+    local count
+
     packages=$(get_packages)
 
     if [ -z "$packages" ]; then
@@ -117,9 +147,13 @@ start_watchdog() {
     echo "Starting applications..."
 
     for package in $packages; do
+
         FAIL_COUNT["$package"]=0
+
         open_package "$package"
+
         sleep 15
+
     done
 
     echo ""
@@ -144,9 +178,7 @@ start_watchdog() {
 
             else
 
-                # FIX: Correct counter calculation
-                local count="${FAIL_COUNT[$package]:-0}"
-
+                count="${FAIL_COUNT[$package]:-0}"
                 count=$((count + 1))
 
                 FAIL_COUNT["$package"]="$count"
@@ -158,7 +190,15 @@ start_watchdog() {
                     echo -e "${RED}[LIMIT REACHED] $package${RESET}"
 
                     if restart_package "$package"; then
+
                         FAIL_COUNT["$package"]=0
+
+                        echo -e "${GREEN}[RESTART SENT] $package${RESET}"
+
+                    else
+
+                        echo -e "${RED}[RESTART ERROR] $package${RESET}"
+
                     fi
 
                     sleep 10
@@ -271,6 +311,8 @@ LUA
 check_packages() {
 
     local packages
+    local package
+
     packages=$(get_packages)
 
     echo ""
@@ -280,9 +322,13 @@ check_packages() {
     for package in $packages; do
 
         if is_running "$package"; then
+
             echo -e "${GREEN}[ONLINE]${RESET} $package"
+
         else
+
             echo -e "${RED}[OFFLINE]${RESET} $package"
+
         fi
 
     done
