@@ -5,5 +5,6 @@ curl -sL https://github.com/KUYKUBZ/Rejoin/raw/refs/heads/main/nefhub.sh | bash
 ```
 #Araiwa
 ```lua
-curl -sL https://github.com/KUYKUBZ/Rejoin/raw/refs/heads/main/Araiwa.sh | bash
+curl -L "https://raw.githubusercontent.com/KUYKUBZ/Rejoin/refs/heads/main/test.sh" -o Araiwa.sh
+bash Araiwa.sh
 ```
