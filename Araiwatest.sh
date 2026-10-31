@@ -3,17 +3,21 @@
 
 CONFIG="$HOME/.rejoin_link"
 ERROR_LOG="$HOME/ariwaa_errors.log"
-LOCK="$HOME/.ariwaa_recovery_lock"
+LOCK_DIR="$HOME/.ariwaa_locks"
+XML="/sdcard/ariwaa_window.xml"
+
+mkdir -p "$LOCK_DIR"
+touch "$ERROR_LOG"
 
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 YELLOW='\033[1;33m'
-RED='\033[1;31m'
 GREEN='\033[1;32m'
+RED='\033[1;31m'
 RESET='\033[0m'
 
 # -----------------------------
-# Find Roblox packages
+# Packages
 # -----------------------------
 
 get_packages() {
@@ -23,41 +27,56 @@ get_packages() {
 }
 
 # -----------------------------
-# Get foreground package
+# Foreground package
 # -----------------------------
 
-get_foreground_package() {
-    local activity
-
-    activity=$(
-        /system/bin/dumpsys activity activities 2>/dev/null |
+get_foreground() {
+    su -c 'dumpsys activity activities' 2>/dev/null |
         grep -E 'mResumedActivity|topResumedActivity' |
-        tail -n 1
-    )
-
-    if [ -z "$activity" ]; then
-        activity=$(
-            /system/bin/dumpsys window windows 2>/dev/null |
-            grep 'mCurrentFocus' |
-            head -n 1
-        )
-    fi
-
-    printf '%s\n' "$activity" |
-        grep -oE '[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){1,}/' |
+        tail -n 1 |
+        grep -oE '[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+' |
         head -n 1 |
-        tr -d '/'
+        cut -d/ -f1
 }
 
 # -----------------------------
-# Check target package
+# Check package
 # -----------------------------
 
-is_target_package() {
-    local target="$1"
-
+is_target() {
     printf '%s\n' "$PACKAGES" |
-        grep -Fxq "$target"
+        grep -Fxq "$1"
+}
+
+# -----------------------------
+# Read foreground UI
+# -----------------------------
+
+read_screen() {
+    su -c "uiautomator dump $XML >/dev/null 2>&1 && cat $XML && rm -f $XML" 2>/dev/null
+}
+
+# -----------------------------
+# Detect visible errors
+# -----------------------------
+
+detect_error() {
+    local screen="$1"
+
+    printf '%s\n' "$screen" |
+        grep -Eio \
+        'Error[ _-]*Code[^"]*[0-9]+|DISCONNECTED|Connection Lost|Connection Failed|Connection Timed Out|Same account launched' |
+        head -n 1
+}
+
+# -----------------------------
+# Manual verification errors
+# -----------------------------
+
+is_blocked() {
+    printf '%s\n' "$1" |
+        grep -Eiq \
+        'AccountLocked|TwoStepVerification|Captcha|Verification|ChallengeActivity|Funcaptcha'
 }
 
 # -----------------------------
@@ -86,144 +105,62 @@ open_rbx() {
 }
 
 # -----------------------------
-# Detect Error Code
+# Recovery
 # -----------------------------
 
-is_error() {
-    local line="$1"
-
-    echo "$line" |
-        grep -Eiq \
-        'Error[ _-]*Code[^0-9]*[0-9]+|Disconnected from|Connection Lost|Connection Failed|Connection Timed Out|Same account launched|WIN DEATH|has died|am_crash|ANR in|am_anr'
-}
-
-# -----------------------------
-# Errors requiring manual attention
-# -----------------------------
-
-is_blocked_error() {
-    local line="$1"
-
-    echo "$line" |
-        grep -Eiq \
-        'AccountLocked|ChallengeActivity|TwoStepVerification|arkoselabs|Funcaptcha|Captcha'
-}
-
-# -----------------------------
-# Error Recovery
-# -----------------------------
-
-recover_package() {
+recover() {
     local package="$1"
     local error="$2"
 
-    # Prevent repeated recovery
-    if ! mkdir "$LOCK" 2>/dev/null; then
+    local lock="$LOCK_DIR/$package"
+
+    if ! mkdir "$lock" 2>/dev/null; then
         return
     fi
-
-    {
-        echo "[$(date '+%F %T')] Package: $package"
-        echo "Error: $error"
-        echo "-----------------------------"
-    } >> "$ERROR_LOG"
 
     echo
     echo -e "${RED}[ERROR DETECTED]${RESET}"
-    echo "$error"
+    echo "Package: $package"
+    echo "Error: $error"
 
-    if is_blocked_error "$error"; then
+    echo "[$(date '+%F %T')] $package : $error" \
+        >> "$ERROR_LOG"
+
+    if is_blocked "$error"; then
         echo -e "${YELLOW}[MANUAL CHECK REQUIRED]${RESET}"
-        echo "Verification or account restriction detected."
-        rmdir "$LOCK"
+        rmdir "$lock"
         return
     fi
 
-    echo -e "${YELLOW}[REJOIN] $package${RESET}"
-
     open_rbx "$package"
 
-    echo "Waiting 15 seconds..."
-
+    echo "[WAIT] 15 seconds..."
     sleep 15
 
-    rmdir "$LOCK" 2>/dev/null
+    rmdir "$lock" 2>/dev/null
 
     echo -e "${GREEN}[RECOVERY FINISHED]${RESET}"
 }
 
 # -----------------------------
-# Monitor Android Logcat
-# -----------------------------
-
-monitor_errors() {
-    echo "[LOGCAT] Starting monitor..."
-
-    /system/bin/logcat -v brief 2>&1 |
-    while IFS= read -r line; do
-
-        if is_error "$line"; then
-
-            package=$(get_foreground_package)
-
-            if [ -z "$package" ]; then
-                continue
-            fi
-
-            if ! is_target_package "$package"; then
-                continue
-            fi
-
-            recover_package "$package" "$line"
-
-        fi
-
-    done
-}
-
-# -----------------------------
-# Main Menu
+# Menu
 # -----------------------------
 
 while true; do
 
     clear
 
-    WIDTH=$(tput cols 2>/dev/null)
-    [[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
+    echo -e "${CYAN}+------------------------------+${RESET}"
+    echo -e "${CYAN}|          A R I W A A         |${RESET}"
+    echo -e "${CYAN}+------------------------------+${RESET}"
+    echo
+    echo "[1] Open Roblox + Monitor"
+    echo "[2] Set Game Link"
+    echo "[3] View Error Log"
+    echo "[4] Exit"
+    echo
 
-    [ "$WIDTH" -lt 10 ] && WIDTH=10
-    [ "$WIDTH" -gt 50 ] && WIDTH=50
-
-    INNER=$((WIDTH - 2))
-
-    border() {
-        printf "${CYAN}+"
-        printf '%*s' "$INNER" '' | tr ' ' '-'
-        printf "+${RESET}\n"
-    }
-
-    line() {
-        printf "${CYAN}|${RESET}"
-        printf "%-*.*s" "$INNER" "$INNER" "$1"
-        printf "${CYAN}|${RESET}\n"
-    }
-
-    border
-    line ""
-    line "       A r i w a a"
-    line ""
-    border
-    line ""
-    line " [1] Open Roblox"
-    line " [2] Set Game Link"
-    line " [3] View Error Log"
-    line " [4] Exit"
-    line ""
-    border
-
-    printf "\n${YELLOW}Select: ${WHITE}"
-    read -r choice
+    read -r -p "Select: " choice
 
     case "$choice" in
 
@@ -232,7 +169,7 @@ while true; do
             PACKAGES=$(get_packages)
 
             if [ -z "$PACKAGES" ]; then
-                echo "No Roblox apps found."
+                echo "No Roblox packages found."
                 read -r -p "Press Enter..."
                 continue
             fi
@@ -240,41 +177,49 @@ while true; do
             url=""
             [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
-            echo "$PACKAGES" | while IFS= read -r package; do
+            while IFS= read -r package; do
                 [ -z "$package" ] && continue
 
                 open_rbx "$package"
                 sleep 20
-            done
 
-            # Start error monitor
-            monitor_errors &
-            MONITOR_PID=$!
-
-            trap 'kill "$MONITOR_PID" 2>/dev/null; rmdir "$LOCK" 2>/dev/null; exit 0' INT TERM
+            done <<< "$PACKAGES"
 
             echo
-            echo -e "${GREEN}Ariwaa Monitor Started${RESET}"
-            echo "Press CTRL+C to stop."
+            echo -e "${GREEN}[MONITOR STARTED]${RESET}"
 
+            # Monitor foreground application
             while true; do
 
-                CURRENT=$(get_foreground_package)
+                CURRENT=$(get_foreground)
 
-                if [ -n "$CURRENT" ] && is_target_package "$CURRENT"; then
+                if [ -n "$CURRENT" ] && is_target "$CURRENT"; then
 
-                    echo -ne "\r${GREEN}[FOREGROUND]${RESET} $CURRENT                    "
+                    echo -e "${GREEN}[APP FOREGROUND]${RESET} $CURRENT"
+
+                    SCREEN=$(read_screen)
+
+                    ERROR=$(detect_error "$SCREEN")
+
+                    if [ -n "$ERROR" ]; then
+
+                        recover "$CURRENT" "$ERROR"
+
+                    else
+
+                        echo -e "${CYAN}[NO VISIBLE ERROR]${RESET} $CURRENT"
+
+                    fi
 
                 else
 
-                    echo -ne "\r${YELLOW}[NOT IN FOREGROUND]${RESET} $CURRENT                    "
+                    echo -e "${YELLOW}[WAITING FOR ROBLOX]${RESET}"
 
                 fi
 
                 sleep 3
 
             done
-
             ;;
 
         2)
@@ -299,19 +244,14 @@ while true; do
 
             echo "$url" > "$CONFIG"
 
-            echo "Link saved successfully!"
+            echo "Link saved!"
             read -r -p "Press Enter..."
 
             ;;
 
         3)
 
-            if [ -f "$ERROR_LOG" ]; then
-                cat "$ERROR_LOG"
-            else
-                echo "No Error Log."
-            fi
-
+            cat "$ERROR_LOG"
             read -r -p "Press Enter..."
 
             ;;
