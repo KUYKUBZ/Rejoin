@@ -67,6 +67,12 @@ is_target_package() {
 open_rbx() {
     local package="$1"
 
+    echo -e "${YELLOW}[STOP] $package${RESET}"
+
+    su -c "am force-stop $package"
+
+    sleep 2
+
     echo -e "${GREEN}[OPEN] $package${RESET}"
 
     if [ -n "$url" ]; then
@@ -75,10 +81,7 @@ open_rbx() {
             -d "$url" \
             -p "$package"
     else
-        am start \
-            -a android.intent.action.MAIN \
-            -c android.intent.category.LAUNCHER \
-            -p "$package"
+        monkey -p "$package" 1
     fi
 }
 
