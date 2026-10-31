@@ -7,27 +7,72 @@ AUTO="/storage/emulated/0/Delta/Autoexecute"
 CONFIG="$HOME/.rejoin_link"
 STATUS_DIR="$HOME/Ariwaa/status"
 
+MAX_FAIL=10
+CHECK_INTERVAL=5
+
 mkdir -p "$STATUS_DIR"
 
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
 YELLOW='\033[1;33m'
+RED='\033[1;31m'
+GREEN='\033[1;32m'
 RESET='\033[0m'
 
-# Find Roblox packages
+# ==========================================
+# PACKAGE DETECTION
+# ==========================================
+
 get_packages() {
-    pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
+    pm list packages |
+        grep -Ei 'roblox|delt' |
+        sed 's/package://'
 }
 
-# Check individual account status
+# ==========================================
+# TASK DETECTION
+# ==========================================
+
+has_task() {
+    local package="$1"
+
+    /system/bin/dumpsys activity recents 2>/dev/null |
+        grep -F "A=$package " >/dev/null
+}
+
+# ==========================================
+# RESTART PACKAGE
+# ==========================================
+
+restart_package() {
+    local package="$1"
+
+    echo -e "${RED}[RESTART] $package${RESET}"
+
+    if su -c "am force-stop '$package'"; then
+        sleep 2
+    else
+        echo "Force-stop failed: $package"
+        return 1
+    fi
+
+    if [ -n "$url" ]; then
+        am start -a android.intent.action.VIEW \
+            -d "$url" -p "$package"
+    else
+        monkey -p "$package" 1
+    fi
+}
+
+# ==========================================
+# GAME STATUS CHECK
+# ==========================================
+
 check_game() {
     local player="$1"
     local STATUS="$STATUS_DIR/${player}_status.txt"
 
-    if [ ! -f "$STATUS" ]; then
-        echo "NOT_IN_GAME"
-        return 1
-    fi
+    [ -f "$STATUS" ] || return 1
 
     local status timestamp now
 
@@ -38,15 +83,16 @@ check_game() {
     if [[ "$status" == "IN_GAME" ]] &&
        [[ "$timestamp" =~ ^[0-9]+$ ]] &&
        (( now - timestamp >= 0 && now - timestamp <= 10 )); then
-        echo "IN_GAME"
         return 0
     fi
 
-    echo "NOT_IN_GAME"
     return 1
 }
 
-# Create Lua API
+# ==========================================
+# CREATE LUA API
+# ==========================================
+
 create_api() {
     mkdir -p "$AUTO"
 
@@ -60,12 +106,16 @@ if not isfolder(folder) then
     makefolder(folder)
 end
 
-local filename = folder .. "/" .. tostring(Player.UserId) .. "_status.txt"
+local filename = folder .. "/" ..
+    tostring(Player.UserId) .. "_status.txt"
 
 while true do
     local Character = Player.Character
-    local Humanoid = Character and Character:FindFirstChild("Humanoid")
-    local HRP = Character and Character:FindFirstChild("HumanoidRootPart")
+    local Humanoid = Character and
+        Character:FindFirstChild("Humanoid")
+
+    local HRP = Character and
+        Character:FindFirstChild("HumanoidRootPart")
 
     local status = "NOT_IN_GAME"
 
@@ -87,8 +137,79 @@ LUA
     echo "Created: $AUTO/api.lua"
 }
 
-# Menu
+# ==========================================
+# WATCHDOG
+# ==========================================
+
+start_watchdog() {
+
+    local packages
+    packages=$(get_packages)
+
+    if [ -z "$packages" ]; then
+        echo "No Roblox apps found."
+        read -r -p "Press Enter..."
+        return
+    fi
+
+    local url=""
+    [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
+
+    declare -A FAIL_COUNT
+
+    for package in $packages; do
+        FAIL_COUNT["$package"]=0
+    done
+
+    echo ""
+    echo "Watchdog Started"
+    echo "Max failures: $MAX_FAIL"
+    echo "Interval: ${CHECK_INTERVAL}s"
+    echo "Press CTRL+C to stop."
+    echo ""
+
+    while true; do
+
+        for package in $packages; do
+
+            if has_task "$package"; then
+
+                FAIL_COUNT["$package"]=0
+
+                echo -e "${GREEN}[ONLINE]${RESET} $package"
+
+            else
+
+                FAIL_COUNT["$package"]=$(
+                    (${FAIL_COUNT["$package"]:-0} + 1)
+                )
+
+                echo -e "${YELLOW}[FAILED]${RESET} $package : ${FAIL_COUNT["$package"]}/$MAX_FAIL"
+
+                if (( FAIL_COUNT["$package"] >= MAX_FAIL )); then
+
+                    restart_package "$package"
+
+                    FAIL_COUNT["$package"]=0
+
+                    sleep 10
+                fi
+
+            fi
+
+        done
+
+        sleep "$CHECK_INTERVAL"
+
+    done
+}
+
+# ==========================================
+# MENU
+# ==========================================
+
 while true; do
+
     clear
 
     WIDTH=$(tput cols 2>/dev/null)
@@ -116,7 +237,7 @@ while true; do
     line ""
     border
     line ""
-    line " [1] Open Roblox"
+    line " [1] Open Roblox + Watchdog"
     line " [2] Set Game Link"
     line " [3] Setup Executor"
     line " [4] Check Account Status"
@@ -128,35 +249,9 @@ while true; do
     read -r choice
 
     case "$choice" in
+
         1)
-            packages=$(get_packages)
-
-            if [ -z "$packages" ]; then
-                echo "No Roblox apps found."
-                read -r -p "Press Enter..."
-                continue
-            fi
-
-            url=""
-            [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
-
-            for package in $packages; do
-                echo "Opening $package"
-
-                if [ -n "$url" ]; then
-                    am start -a android.intent.action.VIEW \
-                        -d "$url" -p "$package"
-                else
-                    am start -a android.intent.action.MAIN \
-                        -c android.intent.category.LAUNCHER \
-                        -p "$package"
-                fi
-
-                sleep 20
-            done
-
-            echo "Roblox launch completed."
-            read -r -p "Press Enter..."
+            start_watchdog
             ;;
 
         2)
@@ -164,8 +259,10 @@ while true; do
 
             if [[ "$game" =~ ^[0-9]+$ ]]; then
                 url="roblox://experiences/start?placeId=$game"
+
             elif [[ "$game" == http://* || "$game" == https://* ]]; then
                 url="$game"
+
             else
                 echo "Invalid Game ID or Link."
                 read -r -p "Press Enter..."
@@ -173,6 +270,7 @@ while true; do
             fi
 
             echo "$url" > "$CONFIG"
+
             echo "Link saved successfully!"
             read -r -p "Press Enter..."
             ;;
@@ -184,15 +282,13 @@ while true; do
 
         4)
             echo ""
-            echo "Account Status"
-            echo "-------------------------"
 
             for file in "$STATUS_DIR"/*_status.txt; do
                 [ -f "$file" ] || continue
 
                 player=$(basename "$file" _status.txt)
 
-                if check_game "$player" >/dev/null; then
+                if check_game "$player"; then
                     echo "[$player] IN GAME"
                 else
                     echo "[$player] NOT IN GAME"
@@ -210,5 +306,7 @@ while true; do
             echo "Invalid option."
             sleep 1
             ;;
+
     esac
+
 done
