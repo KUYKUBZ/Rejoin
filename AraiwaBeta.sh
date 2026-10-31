@@ -64,6 +64,44 @@ LUA
     echo "Created: $AUTO/api.lua"
 }
 
+# Force stop package
+force_stop() {
+    package="$1"
+
+    echo -e "${YELLOW}[FORCE STOP]${RESET} $package"
+
+    if su -c "am force-stop '$package'"; then
+        echo -e "${GREEN}[STOP OK]${RESET} $package"
+        return 0
+    else
+        echo -e "${RED}[STOP ERROR]${RESET} $package"
+        return 1
+    fi
+}
+
+# Open package
+open_package() {
+    package="$1"
+    url="$2"
+
+    force_stop "$package"
+
+    sleep 2
+
+    echo "[OPENING] $package"
+
+    if [ -n "$url" ]; then
+        am start -a android.intent.action.VIEW \
+            -d "$url" -p "$package"
+    else
+        am start -a android.intent.action.MAIN \
+            -c android.intent.category.LAUNCHER \
+            -p "$package"
+    fi
+
+    sleep 10
+}
+
 while true; do
     clear
 
@@ -121,22 +159,14 @@ while true; do
 
             for package in $packages; do
                 if [ -n "$url" ]; then
-                    am start -a android.intent.action.VIEW \
-                        -d "$url" -p "$package"
-                else
-                    am start -a android.intent.action.MAIN \
-                        -c android.intent.category.LAUNCHER \
-                        -p "$package"
+                    open_package -d "$url" -p "$package"
                 fi
                 sleep 20
             done
 
             while true; do
                 clear
-                echo "===== GAME STATUS ====="
                 check_game
-                echo
-                echo "Press CTRL+C to stop monitoring"
                 sleep 3
             done
             ;;
@@ -146,7 +176,7 @@ while true; do
 
             if [[ "$game" =~ ^[0-9]+$ ]]; then
                 url="roblox://experiences/start?placeId=$game"
-            elif [[ "$game" == http://* || "$game" == https://* ]]; then
+            elif [[ "$game" == * ]]; then
                 url="$game"
             else
                 echo "Invalid Game ID or Link."
@@ -165,13 +195,6 @@ while true; do
             ;;
 
         4)
-            clear
-            echo "===== GAME STATUS ====="
-            check_game
-            read -r -p "Press Enter..."
-            ;;
-
-        5)
             exit 0
             ;;
 
