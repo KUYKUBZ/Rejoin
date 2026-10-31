@@ -132,7 +132,40 @@ while true; do
             while true; do
                 clear
                 echo "===== GAME STATUS ====="
-                check_game
+            
+                status=$(check_game)
+                echo "$status"
+            
+                if [ "$status" = "IN_GAME" ]; then
+                    failures=0
+                else
+                    failures=$((failures + 1))
+                    echo "Checking... $failures/4"
+                fi
+            
+                if [ "$failures" -ge 4 ]; then
+                    echo "Game disconnected!"
+                    echo "Restarting Roblox..."
+            
+                    for package in $packages; do
+                        am force-stop "$package"
+                        sleep 2
+            
+                        if [ -n "$url" ]; then
+                            am start -a android.intent.action.VIEW \
+                                -d "$url" -p "$package"
+                        else
+                            am start -a android.intent.action.MAIN \
+                                -c android.intent.category.LAUNCHER \
+                                -p "$package"
+                        fi
+            
+                        sleep 20
+                    done
+            
+                    failures=0
+                fi
+            
                 echo
                 echo "Press CTRL+C to stop monitoring"
                 sleep 3
