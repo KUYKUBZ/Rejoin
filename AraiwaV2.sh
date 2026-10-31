@@ -5,9 +5,10 @@ CONFIG="$HOME/.rejoin_link"
 ERROR_LOG="$HOME/ariwaa_errors.log"
 LOCK_DIR="$HOME/.ariwaa_locks"
 STATE_DIR="$HOME/.ariwaa_state"
+EVENT_LOG="$STATE_DIR/events.log"
 
 mkdir -p "$LOCK_DIR" "$STATE_DIR"
-touch "$ERROR_LOG"
+touch "$ERROR_LOG" "$EVENT_LOG"
 
 CYAN='\033[1;36m'
 GREEN='\033[1;32m'
@@ -16,9 +17,11 @@ RED='\033[1;31m'
 WHITE='\033[1;37m'
 RESET='\033[0m'
 
-MONITOR_PID=""
+LOGCAT_PID=""
+PROCESS_PID=""
 PACKAGES=""
 url=""
+RUNNING=0
 
 # -----------------------------
 # Find packages
@@ -31,26 +34,42 @@ get_packages() {
         sort -u
 }
 
+is_target() {
+    local target="$1"
+    grep -Fxq "$target" <<< "$PACKAGES"
+}
+
 # -----------------------------
-# Check package process
+# Package process check
 # -----------------------------
 
 package_running() {
     local package="$1"
 
-    su -c "pidof $package" 2>/dev/null |
+    is_target "$package" || return 1
+
+    su -c "pidof '$package'" 2>/dev/null |
         grep -q '[0-9]'
 }
 
 # -----------------------------
-# Map Logcat PID to package
+# Event output
+# -----------------------------
+
+event() {
+    printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >> "$EVENT_LOG"
+}
+
+# -----------------------------
+# PID to package
 # -----------------------------
 
 find_package_by_pid() {
     local pid="$1"
     local process
+    local package
 
-    [ -z "$pid" ] && return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
 
     process=$(
         su -c "ps -A -o PID,NAME" 2>/dev/null |
@@ -60,7 +79,7 @@ find_package_by_pid() {
     for package in $PACKAGES; do
         case "$process" in
             "$package"|"$package":*)
-                echo "$package"
+                printf '%s\n' "$package"
                 return 0
                 ;;
         esac
@@ -69,23 +88,18 @@ find_package_by_pid() {
     return 1
 }
 
-# -----------------------------
-# Identify package from log
-# -----------------------------
-
 identify_package() {
     local line="$1"
     local pid="$2"
+    local package
 
-    # Package name directly in log
     for package in $PACKAGES; do
         if [[ "$line" == *"$package"* ]]; then
-            echo "$package"
+            printf '%s\n' "$package"
             return 0
         fi
     done
 
-    # Otherwise map PID
     find_package_by_pid "$pid"
 }
 
@@ -96,25 +110,21 @@ identify_package() {
 is_error() {
     printf '%s\n' "$1" |
         grep -Eiq \
-        'Error[ _-]*Code[^0-9]*[0-9]+|Disconnected from|DISCONNECTED|Connection Lost|Connection Failed|Connection Timed Out|Same account launched|FATAL EXCEPTION|am_crash|ANR in|am_anr|has died'
+        'Error[ _-]*Code[^0-9]*[0-9]+|Disconnected from|DISCONNECTED|Connection Lost|Connection Failed|Connection Timed Out|FATAL EXCEPTION|am_crash|ANR in|am_anr|has died'
 }
-
-# -----------------------------
-# Error code extraction
-# -----------------------------
 
 get_error_code() {
     local line="$1"
 
     if [[ "$line" =~ [Ee]rror[[:space:]_-]*[Cc]ode[^0-9]*([0-9]+) ]]; then
-        echo "${BASH_REMATCH[1]}"
+        printf '%s\n' "${BASH_REMATCH[1]}"
     else
-        echo "UNKNOWN"
+        printf 'UNKNOWN\n'
     fi
 }
 
 # -----------------------------
-# Manual attention errors
+# Manual attention
 # -----------------------------
 
 requires_manual() {
@@ -122,7 +132,7 @@ requires_manual() {
 
     printf '%s\n' "$line" |
         grep -Eiq \
-        'AccountLocked|TwoStepVerification|Captcha|Verification|ChallengeActivity|Funcaptcha'
+        'AccountLocked|TwoStepVerification|Captcha|Verification|ChallengeActivity|Funcaptcha|Error[ _-]*Code[^0-9]*267'
 }
 
 # -----------------------------
@@ -132,21 +142,20 @@ requires_manual() {
 open_rbx() {
     local package="$1"
 
-    echo -e "${YELLOW}[STOP] $package${RESET}"
+    is_target "$package" || {
+        event "[REJECTED] Unknown package: $package"
+        return 1
+    }
 
-    su -c "am force-stop $package"
-
-    sleep 2
-
-    echo -e "${GREEN}[OPEN] $package${RESET}"
+    event "[OPEN] $package"
 
     if [ -n "$url" ]; then
         am start \
             -a android.intent.action.VIEW \
             -d "$url" \
-            -p "$package"
+            -p "$package" >/dev/null 2>&1
     else
-        monkey -p "$package" 1
+        monkey -p "$package" 1 >/dev/null 2>&1
     fi
 }
 
@@ -159,31 +168,36 @@ recover_package() {
     local line="$2"
     local code
     local lock="$LOCK_DIR/$package"
-    local last_file="$STATE_DIR/$package"
+    local last_file="$STATE_DIR/$package.status"
     local now
-    local last
+    local last=0
+
+    is_target "$package" || return 1
 
     code=$(get_error_code "$line")
 
-    # Prevent simultaneous recovery
+    if requires_manual "$line"; then
+        event "[MANUAL CHECK] $package | CODE: $code"
+        return
+    fi
+
     if ! mkdir "$lock" 2>/dev/null; then
         return
     fi
 
-    # Cooldown per package
     now=$(date +%s)
-    last=0
 
-    [ -f "$last_file" ] && read -r last < "$last_file"
+    [ -f "$last_file" ] &&
+        read -r last < "$last_file"
 
     if [[ "$last" =~ ^[0-9]+$ ]] &&
        (( now - last < 45 )); then
-        echo "[COOLDOWN] $package"
+        event "[COOLDOWN] $package"
         rmdir "$lock"
         return
     fi
 
-    echo "$now" > "$last_file"
+    printf '%s\n' "$now" > "$last_file"
 
     {
         echo "[$(date '+%F %T')]"
@@ -193,116 +207,148 @@ recover_package() {
         echo "-------------------------"
     } >> "$ERROR_LOG"
 
-    echo
-    echo -e "${RED}[ERROR DETECTED]${RESET}"
-    echo "Package: $package"
-    echo "Code: $code"
+    event "[ERROR] $package | CODE: $code"
 
-    if requires_manual "$line" "$code"; then
-        echo -e "${YELLOW}[MANUAL CHECK REQUIRED]${RESET}"
-        rmdir "$lock"
-        return
-    fi
+    # Restart only the selected package.
+    su -c "am force-stop '$package'" >/dev/null 2>&1
+
+    sleep 2
 
     open_rbx "$package"
 
-    echo "[WAIT] 20 seconds"
+    event "[WAIT] $package"
+
     sleep 20
 
     if package_running "$package"; then
-        echo -e "${GREEN}[PROCESS RUNNING] $package${RESET}"
+        event "[PROCESS RUNNING] $package"
     else
-        echo -e "${RED}[PROCESS NOT FOUND] $package${RESET}"
+        event "[PROCESS NOT FOUND] $package"
     fi
 
     rmdir "$lock"
 }
 
 # -----------------------------
-# Monitor all Logcat processes
+# Logcat monitor
 # -----------------------------
 
 monitor_logcat() {
-    echo "[LOGCAT MONITOR STARTED]"
+    event "[LOGCAT STARTED]"
 
     su -c 'logcat -v threadtime' 2>/dev/null |
     while IFS= read -r raw; do
 
-        read -r date time pid tid priority tag message <<< "$raw"
+        # threadtime format:
+        # date time PID TID priority tag: message
 
-        line="$raw"
+        read -r date time pid tid priority rest <<< "$raw"
 
-        if ! is_error "$line"; then
-            continue
-        fi
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
 
-        package=$(identify_package "$line" "$pid")
+        is_error "$raw" || continue
 
-        [ -z "$package" ] && continue
+        package=$(identify_package "$raw" "$pid")
 
-        echo -e "${RED}[LOG ERROR]${RESET} $package"
+        [ -n "$package" ] || continue
 
-        recover_package "$package" "$line" &
+        event "[LOG ERROR] $package"
+
+        recover_package "$package" "$raw" &
 
     done
 }
 
 # -----------------------------
-# Monitor all package processes
+# Process monitor
 # -----------------------------
 
 monitor_processes() {
-    local missing=()
     local package
     local count
+    local -A missing
 
     for package in $PACKAGES; do
-        missing+=("$package:0")
+        missing["$package"]=0
     done
+
+    event "[PROCESS MONITOR STARTED]"
 
     while true; do
 
-        local updated=()
-
-        for item in "${missing[@]}"; do
-
-            package="${item%:*}"
-            count="${item##*:}"
+        for package in $PACKAGES; do
 
             if package_running "$package"; then
 
-                updated+=("$package:0")
+                missing["$package"]=0
 
-                echo -e "${GREEN}[PROCESS RUNNING]${RESET} $package"
+                event "[PROCESS RUNNING] $package"
 
             else
 
+                count=${missing["$package"]}
                 count=$((count + 1))
 
-                echo -e "${YELLOW}[PROCESS MISSING]${RESET} $package ($count/3)"
+                missing["$package"]=$count
+
+                event "[PROCESS MISSING] $package ($count/3)"
 
                 if (( count >= 3 )); then
 
-                    echo "[PROCESS LOST] $package"
+                    event "[PROCESS LOST] $package"
 
                     recover_package \
                         "$package" \
                         "Process missing / application stopped" &
 
-                    count=0
+                    missing["$package"]=0
 
                 fi
-
-                updated+=("$package:$count")
 
             fi
 
         done
 
-        missing=("${updated[@]}")
-
         sleep 5
+    done
+}
 
+# -----------------------------
+# Dashboard
+# -----------------------------
+
+dashboard() {
+    local line
+    local last_line=0
+
+    while true; do
+
+        clear
+
+        printf "${CYAN}+--------------------------------------+\n"
+        printf "|              ARIWAA MONITOR          |\n"
+        printf "+--------------------------------------+\n${RESET}"
+
+        printf "\n${WHITE}Packages:${RESET}\n"
+
+        while IFS= read -r package; do
+            [ -z "$package" ] && continue
+
+            if package_running "$package"; then
+                printf "${GREEN}[RUNNING]${RESET} %s\n" "$package"
+            else
+                printf "${YELLOW}[MISSING]${RESET} %s\n" "$package"
+            fi
+
+        done <<< "$PACKAGES"
+
+        printf "\n${CYAN}Recent Events:${RESET}\n"
+
+        tail -n 15 "$EVENT_LOG"
+
+        printf "\n${YELLOW}Press CTRL+C to stop monitoring.${RESET}\n"
+
+        sleep 3
     done
 }
 
@@ -311,17 +357,26 @@ monitor_processes() {
 # -----------------------------
 
 stop_monitors() {
-    echo
-    echo "[STOPPING MONITORS]"
+    [ "$RUNNING" = 1 ] || return
+    RUNNING=0
 
-    [ -n "$MONITOR_PID" ] &&
-        kill "$MONITOR_PID" 2>/dev/null
+    trap '' INT TERM
+
+    event "[STOPPING MONITORS]"
+
+    [ -n "$LOGCAT_PID" ] &&
+        kill "$LOGCAT_PID" 2>/dev/null
+
+    [ -n "$PROCESS_PID" ] &&
+        kill "$PROCESS_PID" 2>/dev/null
 
     jobs -pr | xargs -r kill 2>/dev/null
 
+    wait 2>/dev/null
+
     rm -rf "$LOCK_DIR"/*
 
-    echo "Monitor stopped."
+    printf "\n${YELLOW}Monitor stopped.${RESET}\n"
 }
 
 # -----------------------------
@@ -332,10 +387,10 @@ while true; do
 
     clear
 
-    echo -e "${CYAN}+------------------------------+${RESET}"
-    echo -e "${CYAN}|          A R I W A A         |${RESET}"
-    echo -e "${CYAN}+------------------------------+${RESET}"
-    echo
+    printf "${CYAN}+------------------------------+\n"
+    printf "|          A R I W A A         |\n"
+    printf "+------------------------------+${RESET}\n\n"
+
     echo "[1] Open Roblox + Multi Monitor"
     echo "[2] Set Game Link"
     echo "[3] View Error Log"
@@ -359,38 +414,39 @@ while true; do
             url=""
             [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
+            : > "$EVENT_LOG"
+
             echo
             echo "Packages detected:"
 
             while IFS= read -r package; do
+
                 [ -z "$package" ] && continue
 
                 echo " - $package"
+
                 open_rbx "$package"
+
                 sleep 10
 
             done <<< "$PACKAGES"
 
             echo
-            echo -e "${GREEN}[MULTI MONITOR STARTED]${RESET}"
+            echo "Starting monitors..."
 
-            # Start Logcat monitor
+            RUNNING=1
+
             monitor_logcat &
             LOGCAT_PID=$!
 
-            # Start process monitor
             monitor_processes &
             PROCESS_PID=$!
 
-            MONITOR_PID="$LOGCAT_PID $PROCESS_PID"
-
             trap 'stop_monitors; exit 0' INT TERM
 
-            echo "Monitoring all packages."
-            echo "Press CTRL+C to stop."
+            dashboard
 
-            wait
-
+            stop_monitors
             ;;
 
         2)
@@ -398,22 +454,18 @@ while true; do
             read -r -p "Enter Game ID or Link: " game
 
             if [[ "$game" =~ ^[0-9]+$ ]]; then
-
                 url="roblox://experiences/start?placeId=$game"
 
             elif [[ "$game" == http://* || "$game" == https://* ]]; then
-
                 url="$game"
 
             else
-
                 echo "Invalid Game ID or Link."
                 read -r -p "Press Enter..."
                 continue
-
             fi
 
-            echo "$url" > "$CONFIG"
+            printf '%s\n' "$url" > "$CONFIG"
 
             echo "Link saved!"
             read -r -p "Press Enter..."
@@ -436,7 +488,6 @@ while true; do
 
             echo "Invalid option."
             sleep 1
-
             ;;
 
     esac
