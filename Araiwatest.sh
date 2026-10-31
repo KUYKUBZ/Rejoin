@@ -119,11 +119,6 @@ get_error_code() {
 
 requires_manual() {
     local line="$1"
-    local code="$2"
-
-    # Moderation and verification should not
-    # be repeatedly rejoined automatically.
-    [ "$code" = "267" ] && return 0
 
     printf '%s\n' "$line" |
         grep -Eiq \
