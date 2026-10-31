@@ -120,11 +120,11 @@ read -r choice
       read -r -p "Enter Game ID or Link: " game
 
       if [[ "$game" =~ ^[0-9]+$ ]]; then
-        url="https://www.roblox.com/games/$game"
+        url="roblox://experiences/start?placeId=$game"
       elif [[ "$game" == http://* || "$game" == https://* ]]; then
         url="$game"
       else
-        echo "Invalid Game Link."
+        echo "Invalid Game Id or Link."
         read -r -p "Press Enter..."
         continue
       fi
