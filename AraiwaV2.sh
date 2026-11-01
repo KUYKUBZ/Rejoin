@@ -4,25 +4,23 @@
 CONFIG="$HOME/.rejoin_link"
 MAP="$HOME/.ariwaa_map"
 AUTOEXE="/storage/emulated/0/Delta/Autoexecute"
-WORKSPACE="/storage/emulated/0/Delta/Workspace"
-STATUS_DIR="$WORKSPACE/Ariwaa"
+WORKSPACE="/storage/emulated/0/Delta/Workspace/Ariwaa"
 LOG="$HOME/ariwaa_errors.log"
 COOLDOWN="$HOME/.ariwaa_cooldown"
 
-mkdir -p "$AUTOEXE" "$STATUS_DIR"
+mkdir -p "$AUTOEXE" "$WORKSPACE"
 touch "$LOG" "$COOLDOWN"
 
 CYAN='\033[1;36m'
 GREEN='\033[1;32m'
 RED='\033[1;31m'
 YELLOW='\033[1;33m'
-WHITE='\033[1;37m'
 RESET='\033[0m'
 
 get_packages() {
     pm list packages |
         sed 's/package://' |
-        grep -Ei 'roblox|delt' |
+        grep -i 'roblox' |
         sort -u
 }
 
@@ -30,20 +28,11 @@ valid_package() {
     [[ "$1" =~ ^[a-zA-Z0-9._]+$ ]]
 }
 
-get_url() {
-    if [ -f "$CONFIG" ]; then
-        cat "$CONFIG"
-    fi
-}
-
 open_package() {
     local package="$1"
-    local url
-    url=$(get_url)
+    local url=""
 
-    valid_package "$package" || return 1
-
-    echo "Opening $package"
+    [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
     if [ -n "$url" ]; then
         am start -a android.intent.action.VIEW \
@@ -53,15 +42,15 @@ open_package() {
     fi
 }
 
-force_restart() {
+restart_package() {
     local package="$1"
 
     valid_package "$package" || return 1
 
-    echo -e "${YELLOW}RESTART: $package${RESET}"
+    echo -e "${YELLOW}[RESTART] $package${RESET}"
 
     if ! su -c "am force-stop $package"; then
-        echo "FORCE STOP FAILED: $package" >> "$LOG"
+        echo "$(date) FORCE STOP FAILED: $package" >> "$LOG"
         return 1
     fi
 
@@ -69,13 +58,56 @@ force_restart() {
     open_package "$package"
 }
 
+get_last_restart() {
+    awk -F'|' -v p="$1" '$1==p {v=$2} END {print v+0}' "$COOLDOWN"
+}
+
+set_last_restart() {
+    local package="$1"
+    local now="$2"
+
+    grep -v "^${package}|" "$COOLDOWN" > "$COOLDOWN.tmp" 2>/dev/null
+    echo "$package|$now" >> "$COOLDOWN.tmp"
+    mv "$COOLDOWN.tmp" "$COOLDOWN"
+}
+
+setup_mapping() {
+    local packages
+    packages=$(get_packages)
+
+    if [ -z "$packages" ]; then
+        echo "ไม่พบ Roblox Package"
+        return 1
+    fi
+
+    echo "=== Roblox Packages ==="
+    echo "$packages"
+    echo
+    echo "จับคู่ Package กับ User ID ที่ล็อกอินอยู่จริง"
+    echo
+
+    : > "$MAP"
+
+    while IFS= read -r package; do
+        [ -z "$package" ] && continue
+
+        read -r -p "User ID ของ $package: " uid
+
+        if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+            echo "User ID ไม่ถูกต้อง"
+            rm -f "$MAP"
+            return 1
+        fi
+
+        echo "$package|$uid" >> "$MAP"
+    done <<< "$packages"
+
+    echo "บันทึกการจับคู่แล้ว"
+}
+
 create_api() {
     cat > "$AUTOEXE/api.txt" <<'LUA'
 local Players = game:GetService("Players")
-
-local function log(msg)
-    print("[ARIWAA] " .. tostring(msg))
-end
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -90,251 +122,186 @@ end
 
 local folder = "Ariwaa"
 
-local function prepareFolder()
-    pcall(function()
-        if not isfolder(folder) then
-            makefolder(folder)
-        end
-    end)
-end
-
-prepareFolder()
+local ok, err = pcall(function()
+    if not isfolder(folder) then
+        makefolder(folder)
+    end
+end)
 
 local file = folder .. "/" .. tostring(player.UserId) .. "_Status.txt"
 
-local function heartbeat()
-    local state = "IN GAME"
+print("[ARIWAA] STARTED: " .. player.UserId)
 
-    if not player or not player.Parent then
-        state = "OFFLINE"
-    end
-
+while true do
     local content =
-        state .. "\n" ..
+        "IN GAME\n" ..
         tostring(player.UserId) .. "\n" ..
         tostring(os.time())
 
-    local success, err = pcall(function()
+    local success, writeErr = pcall(function()
         writefile(file, content)
     end)
 
     if not success then
-        warn("[ARIWAA] WRITE ERROR: " .. tostring(err))
+        warn("[ARIWAA] WRITE ERROR: " .. tostring(writeErr))
     end
 
-    return success
-end
-
-log("HEARTBEAT STARTED: " .. tostring(player.UserId))
-
-while true do
-    heartbeat()
     task.wait(5)
 end
 LUA
 
-    echo "API created: $AUTOEXE/api.txt"
-    echo "Make sure Delta executes this file."
+    echo "สร้าง API แล้ว: $AUTOEXE/api.txt"
 }
 
-setup_map() {
-    echo
-    echo "=== PACKAGE LIST ==="
-
-    local packages
-    packages=$(get_packages)
-
-    if [ -z "$packages" ]; then
-        echo "No packages found"
-        return
-    fi
-
-    echo "$packages"
-    echo
-
-    touch "$MAP"
-
-    while true; do
-        read -r -p "Package (Enter to finish): " package
-        [ -z "$package" ] && break
-
-        if ! valid_package "$package"; then
-            echo "Invalid package"
-            continue
-        fi
-
-        read -r -p "Roblox User ID: " uid
-
-        if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
-            echo "Invalid User ID"
-            continue
-        fi
-
-        grep -v "^${package}|" "$MAP" > "$MAP.tmp"
-        mv "$MAP.tmp" "$MAP"
-
-        echo "$package|$uid" >> "$MAP"
-        echo "Saved: $package -> $uid"
-    done
-}
-
-get_last_restart() {
-    local package="$1"
-    local value
-
-    value=$(awk -F'|' -v p="$package" '$1==p {v=$2} END {print v}' "$COOLDOWN")
-    echo "${value:-0}"
-}
-
-set_last_restart() {
-    local package="$1"
-    local now="$2"
-
-    grep -v "^${package}|" "$COOLDOWN" > "$COOLDOWN.tmp"
-    echo "$package|$now" >> "$COOLDOWN.tmp"
-    mv "$COOLDOWN.tmp" "$COOLDOWN"
-}
-
-check_one() {
+check_api() {
     local package="$1"
     local uid="$2"
-    local file="$STATUS_DIR/${uid}_Status.txt"
-    local now timestamp diff status file_uid
-    now=$(date +%s)
+    local file="$WORKSPACE/${uid}_Status.txt"
 
     if [ ! -f "$file" ]; then
-        echo -e "${RED}API MISSING${RESET} | $package | $uid"
+        echo "MISSING"
         return 1
     fi
+
+    local status file_uid timestamp now diff
 
     status=$(sed -n '1p' "$file" | tr -d '\r')
     file_uid=$(sed -n '2p' "$file" | tr -d '\r')
-    timestamp=$(sed -n '3p' "$file" | tr -cd '0-9')
+    timestamp=$(sed -n '3p' "$file" | tr -d '\r')
 
-    if [[ "$file_uid" != "$uid" || ! "$timestamp" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}API ERROR${RESET} | $package | $uid"
+    if [[ "$file_uid" != "$uid" ||
+          ! "$timestamp" =~ ^[0-9]+$ ]]; then
+        echo "ERROR"
         return 1
     fi
 
+    now=$(date +%s)
     diff=$((now - timestamp))
 
     if (( diff >= 0 && diff <= 15 )); then
-        echo -e "${GREEN}API ONLINE${RESET} | $package | $uid | $status"
+        echo "ONLINE"
         return 0
     fi
 
-    echo -e "${RED}API OFFLINE${RESET} | $package | $uid | ${diff}s"
+    echo "OFFLINE"
     return 1
 }
 
 monitor() {
-    if [ ! -s "$MAP" ]; then
-        echo "Please setup Package mapping first"
-        return
-    fi
+    local start_time
+    start_time=$(date +%s)
 
-    echo "ARIWAA MONITOR STARTED"
-    echo "Press CTRL+C to stop"
+    echo "ARIWAA AUTO MONITOR STARTED"
 
     while true; do
         clear
-        echo "========== ARIWAA MONITOR =========="
-        echo "Time: $(date)"
+        echo "========== ARIWAA AUTO =========="
+        echo "เวลา: $(date)"
         echo
 
         while IFS='|' read -r package uid; do
             [ -z "$package" ] && continue
             [ -z "$uid" ] && continue
 
-            if ! check_one "$package" "$uid"; then
-                now=$(date +%s)
-                last=$(get_last_restart "$package")
-                elapsed=$((now - last))
+            result=$(check_api "$package" "$uid")
+            now=$(date +%s)
+            elapsed=$((now - start_time))
+            last=$(get_last_restart "$package")
+            cooldown=$((now - last))
 
-                if (( elapsed >= 60 )); then
-                    set_last_restart "$package" "$now"
-                    force_restart "$package"
-                else
-                    echo "Restart cooldown: $package (${elapsed}s)"
-                fi
+            if [ "$result" = "ONLINE" ]; then
+                echo -e "${GREEN}[API ONLINE]${RESET} $package / $uid"
+                continue
+            fi
+
+            echo -e "${RED}[API $result]${RESET} $package / $uid"
+
+            # ให้เวลา Autoexecute ทำงานหลังเปิดเกมครั้งแรก
+            if (( elapsed < 90 )); then
+                echo "รอ API เริ่มทำงาน..."
+                continue
+            fi
+
+            # ป้องกันการรีซ้ำภายใน 60 วินาที
+            if (( cooldown >= 60 )); then
+                set_last_restart "$package" "$now"
+                restart_package "$package"
+            else
+                echo "รอ Cooldown: $((60-cooldown)) วินาที"
             fi
 
         done < "$MAP"
 
         echo
-        echo "Next check: 5 seconds"
+        echo "ตรวจอีกครั้งใน 5 วินาที"
         sleep 5
     done
 }
 
+auto_start() {
+    if [ ! -s "$MAP" ]; then
+        echo "ตั้งค่าการจับคู่ครั้งแรก"
+        setup_mapping || return 1
+    fi
+
+    local packages
+    packages=$(get_packages)
+
+    echo "กำลังเปิด Roblox ทุก Package..."
+
+    while IFS= read -r package; do
+        [ -z "$package" ] && continue
+        open_package "$package"
+        sleep 10
+    done <<< "$packages"
+
+    echo
+    echo "เริ่มตรวจ API..."
+    sleep 5
+    monitor
+}
+
 while true; do
     clear
-
-    echo -e "${CYAN}================================${RESET}"
-    echo -e "${WHITE}          ARIWAA${RESET}"
-    echo -e "${CYAN}================================${RESET}"
+    echo -e "${CYAN}========== ARIWAA ==========${RESET}"
     echo
-    echo "[1] Open Roblox"
-    echo "[2] Set Game Link"
-    echo "[3] Setup API"
-    echo "[4] Setup Package Mapping"
-    echo "[5] Monitor API / Auto Rejoin"
-    echo "[6] Exit"
+    echo "[1] AUTO START"
+    echo "[2] SET GAME LINK"
+    echo "[3] CREATE API"
+    echo "[4] SETUP PACKAGE MAPPING"
+    echo "[5] EXIT"
     echo
 
     read -r -p "Select: " choice
 
     case "$choice" in
         1)
-            packages=$(get_packages)
-
-            if [ -z "$packages" ]; then
-                echo "No Roblox packages found"
-            else
-                while IFS= read -r package; do
-                    [ -z "$package" ] && continue
-                    open_package "$package"
-                    sleep 20
-                done <<< "$packages"
-            fi
-
-            read -r -p "Press Enter..."
+            auto_start
+            read -r -p "กด Enter เพื่อกลับ..."
             ;;
-
         2)
-            read -r -p "Enter Game ID or Link: " game
-
-            if [[ "$game" =~ ^[0-9]+$ ]]; then
-                echo "roblox://experiences/start?placeId=$game" > "$CONFIG"
-            elif [[ "$game" == http://* || "$game" == https://* || "$game" == roblox://* ]]; then
-                echo "$game" > "$CONFIG"
+            read -r -p "ใส่ Private Server Link: " url
+            if [[ "$url" == https://* ]]; then
+                echo "$url" > "$CONFIG"
+                echo "บันทึกลิงก์แล้ว"
             else
-                echo "Invalid link"
+                echo "ลิงก์ไม่ถูกต้อง"
             fi
-
-            read -r -p "Press Enter..."
+            read -r -p "กด Enter..."
             ;;
-
         3)
             create_api
-            read -r -p "Press Enter..."
+            read -r -p "กด Enter..."
             ;;
-
         4)
-            setup_map
-            read -r -p "Press Enter..."
+            setup_mapping
+            read -r -p "กด Enter..."
             ;;
-
         5)
-            monitor
-            ;;
-
-        6)
             exit 0
             ;;
-
         *)
-            echo "Invalid option"
+            echo "ตัวเลือกไม่ถูกต้อง"
             sleep 1
             ;;
     esac
