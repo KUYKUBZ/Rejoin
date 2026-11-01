@@ -1,9 +1,17 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-clear
+# ==========================================
+#             A R A I W A
+#       ROBLOX AUTO REOPEN SYSTEM
+# ==========================================
 
 CONFIG="$HOME/.rejoin_link"
-INTERVAL=1200
+BASE="$HOME/.araiwaa"
+LOG="$BASE/system.log"
+PIDFILE="$BASE/ram_monitor.pid"
+
+mkdir -p "$BASE"
+touch "$LOG"
 
 CYAN='\033[1;36m'
 WHITE='\033[1;37m'
@@ -12,77 +20,127 @@ GREEN='\033[1;32m'
 RED='\033[1;31m'
 RESET='\033[0m'
 
-# Find Roblox packages
+RAM_LIMIT=85
+CLEAN_INTERVAL=60
+RAM_MONITOR_PID=""
+
+# ==========================================
+# FIND ROBLOX PACKAGES
+# ==========================================
+
 get_packages() {
     pm list packages |
         grep -Ei 'roblox|delt' |
         sed 's/package://'
 }
 
-# Check Task
+# ==========================================
+# CHECK APP TASK
+# ==========================================
+
 has_task() {
     /system/bin/dumpsys activity recents 2>/dev/null |
         grep -F "A=$1 " >/dev/null
 }
 
-# Root force stop
-force_stop() {
-    su -c "am force-stop '$1'"
+# ==========================================
+# RAM MONITOR
+# ==========================================
+
+get_ram_usage() {
+    awk '
+    /MemTotal:/ {total=$2}
+    /MemAvailable:/ {available=$2}
+    END {
+        if (total > 0)
+            printf "%d", ((total-available)*100)/total
+        else
+            print 0
+    }' /proc/meminfo
 }
 
-# Open application
-open_app() {
-    local package="$1"
-    local url="$2"
+ram_monitor() {
+    while true; do
+
+        RAM=$(get_ram_usage)
+
+        if [ "$RAM" -ge "$RAM_LIMIT" ]; then
+
+            echo "[$(date)] RAM HIGH: ${RAM}%" >> "$LOG"
+
+            # Request memory trim for Termux
+            am send-trim-memory \
+                com.termux RUNNING_LOW \
+                >/dev/null 2>&1
+
+        fi
+
+        sleep "$CLEAN_INTERVAL"
+    done
+}
+
+start_ram_monitor() {
+
+    if [ -n "$RAM_MONITOR_PID" ] &&
+       kill -0 "$RAM_MONITOR_PID" 2>/dev/null; then
+        return
+    fi
+
+    ram_monitor &
+    RAM_MONITOR_PID=$!
+
+    echo "$RAM_MONITOR_PID" > "$PIDFILE"
+}
+
+stop_ram_monitor() {
+
+    if [ -n "$RAM_MONITOR_PID" ]; then
+        kill "$RAM_MONITOR_PID" 2>/dev/null
+        wait "$RAM_MONITOR_PID" 2>/dev/null
+    fi
+
+    rm -f "$PIDFILE"
+}
+
+# ==========================================
+# OPEN ROBLOX
+# ==========================================
+
+open_package() {
+
+    package="$1"
+    url="$2"
 
     if [ -n "$url" ]; then
-        am start -a android.intent.action.VIEW \
-            -d "$url" -p "$package" >/dev/null 2>&1
+
+        am start \
+            -a android.intent.action.VIEW \
+            -d "$url" \
+            -p "$package"
+
     else
-        am start -a android.intent.action.MAIN \
+
+        am start \
+            -a android.intent.action.MAIN \
             -c android.intent.category.LAUNCHER \
-            -p "$package" >/dev/null 2>&1
+            -p "$package"
+
     fi
 }
 
-# Restart all screens
-restart_all() {
+# ==========================================
+# MAIN MENU
+# ==========================================
 
-    echo -e "\n${YELLOW}[RESTART] Restarting all screens...${RESET}"
-
-    for package in $packages; do
-
-        echo -e "${RED}[STOP]${WHITE} $package"
-
-        force_stop "$package"
-
-        sleep 3
-
-        echo -e "${GREEN}[OPEN]${WHITE} $package"
-
-        open_app "$package" "$url"
-
-        sleep 10
-
-    done
-
-    echo -e "${GREEN}[SUCCESS] All screens restarted.${RESET}"
-
-}
-
-# Detect screen width
-get_width() {
-    WIDTH=$(tput cols 2>/dev/null)
-    [[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
-    [ "$WIDTH" -lt 10 ] && WIDTH=10
-    [ "$WIDTH" -gt 50 ] && WIDTH=50
-}
-
-# Main menu
 while true; do
 
     clear
-    get_width
+
+    WIDTH=$(tput cols 2>/dev/null)
+    [[ "$WIDTH" =~ ^[0-9]+$ ]] || WIDTH=30
+
+    [ "$WIDTH" -lt 10 ] && WIDTH=10
+    [ "$WIDTH" -gt 50 ] && WIDTH=50
 
     INNER=$((WIDTH - 2))
 
@@ -100,13 +158,15 @@ while true; do
 
     border
     line ""
-    line "       A r a i w a "
+    line "       A r a i w a"
+    line "      SMART REJOIN"
     line ""
     border
     line ""
-    line " [1] Start Auto Rejoin"
+    line " [1] Open Roblox"
     line " [2] Set Game Link"
-    line " [3] Exit"
+    line " [3] RAM Information"
+    line " [4] Exit"
     line ""
     border
 
@@ -126,71 +186,53 @@ while true; do
             fi
 
             url=""
-            [ -f "$CONFIG" ] && url=$(cat "$CONFIG")
 
-            echo -e "${GREEN}[START] Opening all screens${RESET}"
+            [ -f "$CONFIG" ] &&
+                url=$(cat "$CONFIG")
 
-            # Initial open
+            start_ram_monitor
+
+            echo ""
+            echo "Starting Roblox packages..."
+
             for package in $packages; do
 
-                echo "[OPEN] $package"
+                echo "Opening: $package"
 
-                open_app "$package" "$url"
+                open_package "$package" "$url"
 
                 sleep 20
 
             done
 
-            # Start 20-minute timer
-            next_restart=$((SECONDS + INTERVAL))
+            echo ""
+            echo "Auto Reopen Started."
+            echo "Press CTRL+C to stop."
 
-            # Monitoring loop
+            trap 'stop_ram_monitor; trap - INT; break' INT
+
             while true; do
 
-                # Restart all screens every 20 minutes
-                if [ "$SECONDS" -ge "$next_restart" ]; then
-
-                    restart_all
-
-                    next_restart=$((SECONDS + INTERVAL))
-
-                fi
-
-                # Check each package
                 for package in $packages; do
 
-                    if has_task "$package"; then
+                    if ! has_task "$package"; then
 
-                        echo -e "${GREEN}[ONLINE]${WHITE} $package"
+                        echo "[Task Not Found] $package"
 
-                    else
+                        open_package "$package" "$url"
 
-                        echo -e "${RED}[TASK NOT FOUND]${WHITE} $package"
-
-                        echo "[REOPEN] $package"
-
-                        open_app "$package" "$url"
-
-                        sleep 10
+                        sleep 20
 
                     fi
 
                 done
 
-                # Countdown
-                remaining=$((next_restart - SECONDS))
-
-                if [ "$remaining" -lt 0 ]; then
-                    remaining=0
-                fi
-                
-                printf "\r${CYAN}[NEXT RESTART] %02d:%02d${RESET}\n" \
-                $((remaining / 60)) \
-                $((remaining % 60))
-
-                sleep 60
+                sleep 5
 
             done
+
+            trap - INT
+
             ;;
 
         2)
@@ -201,7 +243,8 @@ while true; do
 
                 url="roblox://experiences/start?placeId=$game"
 
-            elif [[ "$game" == http://* || "$game" == https://* ]]; then
+            elif [[ "$game" == http://* ||
+                    "$game" == https://* ]]; then
 
                 url="$game"
 
@@ -222,12 +265,32 @@ while true; do
             ;;
 
         3)
+
+            RAM=$(get_ram_usage)
+
+            echo ""
+            echo "========== RAM INFORMATION =========="
+            echo "RAM Usage: ${RAM}%"
+            echo "RAM Threshold: ${RAM_LIMIT}%"
+            echo "Monitor Interval: ${CLEAN_INTERVAL}s"
+            echo "======================================"
+
+            read -r -p "Press Enter..."
+
+            ;;
+
+        4)
+
+            stop_ram_monitor
             exit 0
+
             ;;
 
         *)
+
             echo "Invalid option."
             sleep 1
+
             ;;
 
     esac
