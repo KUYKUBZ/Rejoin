@@ -183,10 +183,10 @@ while true; do
                 if [ "$remaining" -lt 0 ]; then
                     remaining=0
                 fi
-
-                printf "\r${CYAN}[NEXT RESTART] %02d:%02d${RESET}   " \
-                    $((remaining / 60)) \
-                    $((remaining % 60))
+                
+                printf "\r${CYAN}[NEXT RESTART] %02d:%02d${RESET}\n" \
+                $((remaining / 60)) \
+                $((remaining % 60))
 
                 sleep 5
 
