@@ -150,7 +150,7 @@ while true do
 end
 LUA
 
-    echo "สร้าง API แล้ว: $AUTOEXE/api.txt"
+    echo "สร้าง API : $AUTOEXE/api.txt"
 }
 
 check_api() {
