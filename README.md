@@ -7,3 +7,8 @@ pkg update && pkg upgrade -y
 curl -L "https://raw.githubusercontent.com/KUYKUBZ/Rejoin/refs/heads/main/Araiwa.sh" -o Araiwa.sh
 bash Araiwa.sh
 ```
+# Beta
+```lua
+curl -L "https://github.com/KUYKUBZ/Rejoin/raw/refs/heads/main/AraiwaBeta.sh" -o AraiwaBeta.sh
+bash AraiwaBeta.sh
+```
