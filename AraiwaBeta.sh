@@ -188,7 +188,7 @@ while true; do
                 $((remaining / 60)) \
                 $((remaining % 60))
 
-                sleep 5
+                sleep 60
 
             done
             ;;
