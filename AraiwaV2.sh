@@ -72,10 +72,6 @@ open_roblox() {
 
 create_api() {
     cat > "$AUTOEXE/api.txt" <<'LUA'
--- API heartbeat template
--- ต้องมีตัวกลางที่เชื่อถือได้สำหรับระบุ Package
--- ก่อนนำ Heartbeat ไปจับคู่กับ Android Package
-
 local Players = game:GetService("Players")
 
 local player = Players.LocalPlayer
