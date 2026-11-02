@@ -8,7 +8,7 @@
 
 # ── CONFIGURATION ────────────────────────────────────────────
 
-PLACE_ID="your_place_id_here"
+PLACE_ID="132929771812494"
 
 SERVER_INSTANCE_ID=""
 
@@ -44,9 +44,9 @@ CPU_SAMPLE_INTERVAL=2
 CPU_MIN_TICK_DELTA=2
 
 ACCOUNTS=(
-  "com.roblox.client|Account1|$PLACE_ID"
-  # "com.roblox.client2|Account2|$PLACE_ID"
-  # "com.roblox.clientmod|Account3|$PLACE_ID"
+  "com.roblox.clienv|Account1|$PLACE_ID"
+  "com.roblox.clienw|Account2|$PLACE_ID"
+  "com.roblox.clienx|Account3|$PLACE_ID"
 )
 
 ERROR_PATTERNS=(
