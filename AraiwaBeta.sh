@@ -1,5 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
+#test
+
 if [ "$(id -u)" -ne 0 ]; then
     if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "sh" ] && ! echo "$0" | grep -qE "(/bin/bash|/bin/sh)$"; then
         exec su -c "/data/data/com.termux/files/usr/bin/bash \"$(realpath "$0")\" $@"
