@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-PLACE_ID="113290951185459"
+PLACE_ID="132929771812494"
 NOKA_DIR="$HOME/Noka"
 HEARTBEAT_DIR="$NOKA_DIR/heartbeats"
 
