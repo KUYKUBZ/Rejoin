@@ -1,362 +1,1089 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-PLACE_ID="132929771812494"
-NOKA_DIR="$HOME/Noka"
-HEARTBEAT_DIR="$NOKA_DIR/heartbeats"
+if [ "$(id -u)" -ne 0 ]; then
+    if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "sh" ] && ! echo "$0" | grep -qE "(/bin/bash|/bin/sh)$"; then
+        exec su -c "/data/data/com.termux/files/usr/bin/bash \"$(realpath "$0")\" $@"
+    else
+        exec su -c "bash -c '$(curl -sL https://tinyurl.com/2bspyv74 | tr -d '\r')'"
+    fi
+fi
 
-REFRESH=2
-REJOIN_TIME=420 # configurado no menu; valor em segundos
-DISCONNECT_CONFIRM=2
+DOWNLOAD_DIR="/sdcard/Download"
+CONF_DIR="$DOWNLOAD_DIR"
+CONF_FILE="$CONF_DIR/packages.conf"
+EXPORT_FILE="$CONF_DIR/roblox_sessions_export.txt"
+COOKIE_INPUT_FILE="$DOWNLOAD_DIR/cookie.txt"
 
-mkdir -p "$HEARTBEAT_DIR"
+mkdir -p "$DOWNLOAD_DIR"
+[ ! -f "$CONF_FILE" ] && touch "$CONF_FILE"
+[ ! -f "$COOKIE_INPUT_FILE" ] && touch "$COOKIE_INPUT_FILE"
 
-RESET='\033[0m'
-BOLD='\033[1m'
-CYAN='\033[1;36m'
-YELLOW='\033[1;33m'
-ORANGE='\033[38;5;208m'
-GREEN='\033[1;32m'
-RED='\033[1;31m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;34m'
-WHITE='\033[1;37m'
-GRAY='\033[0;37m'
+C_RESET="\033[0m"
+C_BOLD="\033[1m"
+C_CYAN="\033[1;36m"
+C_GREEN="\033[1;32m"
+C_RED="\033[1;31m"
+C_YELLOW="\033[1;33m"
+C_BLUE="\033[1;34m"
+C_MAGENTA="\033[1;35m"
+C_WHITE="\033[1;37m"
+C_GRAY="\033[0;90m"
 
-banner() {
+cleanup() {
+    tput cnorm 2>/dev/null || printf "\033[?25h"
+    printf "${C_RESET}\n"
     clear
-    echo -e "${RED}${BOLD}"
-    echo " ██████╗ ██╗   ██╗███████╗████████╗"
-    echo "██╔════╝ ██║   ██║██╔════╝╚══██╔══╝"
-    echo "██║  ███╗██║   ██║███████╗   ██║   "
-    echo "██║   ██║██║   ██║╚════██║   ██║   "
-    echo "╚██████╔╝╚██████╔╝███████║   ██║   "
-    echo " ╚═════╝  ╚═════╝ ╚══════╝   ╚═╝   "
-    echo -e "${RESET}"
-    echo -e "${BOLD}${YELLOW}              GUST REJOIN${RESET}"
-    echo -e "${GRAY}============================================================${RESET}"
+    exit 0
 }
-get_packages() {
-    {
-        command -v pm >/dev/null 2>&1 && pm list packages -3 2>/dev/null | sed 's/^package://'
-        /system/bin/pm list packages -3 2>/dev/null | sed 's/^package://'
-        printf '%s\\n' free.nokaA free.nokaB free.nokaC
-    } | sort -fu | while IFS= read -r package; do
-        [ -n "$package" ] || continue
-        if pm list packages "$package" 2>/dev/null | grep -Fxq "package:$package" ||
-           /system/bin/pm list packages "$package" 2>/dev/null | grep -Fxq "package:$package"; then
-            printf '%s\\n' "$package"
-        fi
-    done
-}
+trap cleanup INT TERM
 
-running() {
-    pidof "$1" >/dev/null 2>&1
-}
-
-json_value() {
-    local file="$1"
-    local key="$2"
-
-    [ -f "$file" ] || return
-
-    sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" |
-        head -n 1
-}
-
-json_number() {
-    local file="$1"
-    local key="$2"
-
-    [ -f "$file" ] || return
-
-    sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p" "$file" |
-        head -n 1
-}
-
-heartbeat_file() {
-    echo "$HEARTBEAT_DIR/$1.json"
-}
-
-open_game() {
-    local package="$1"
-    local result
-
-    echo
-    echo -e "${YELLOW}[OPEN]${RESET} $package — tentando entrar no Place ID $PLACE_ID"
-
-    # Tentativa 1: deep link Roblox.
-    result="$(am start -W -a android.intent.action.VIEW \\
-        -d "roblox://placeId=$PLACE_ID" -p "$package" 2>&1)"
-    echo "$result"
-    sleep 5
-
-    # Tentativa 2: link HTTPS do jogo, direcionado ao clone.
-    result="$(am start -W -a android.intent.action.VIEW \\
-        -d "https://www.roblox.com/games/$PLACE_ID" -p "$package" 2>&1)"
-    echo "$result"
-    sleep 5
-
-    # Se os links não encaminharem ao jogo, tenta abrir a tela inicial.
-    # Isso não garante que o clone entre na experiência automaticamente.
-    result="$(am start -W -a android.intent.action.MAIN \\
-        -c android.intent.category.LAUNCHER -p "$package" 2>&1)"
-    echo "$result"
-    sleep 8
-}
-
-recover() {
-    local package="$1"
-
-    echo
-    echo -e "${RED}[RECOVERY]${RESET} $package"
-
-    am force-stop "$package" >/dev/null 2>&1
-    sleep 2
-
-    open_game "$package"
-}
-
-format_time() {
-    local s="$1"
-
-    printf "%02d:%02d" "$((s / 60))" "$((s % 60))"
-}
-
-configure_settings() {
-    local value
-    echo
-    echo -e "${BOLD}${YELLOW}CONFIGURAÇÃO${RESET}"
-    read -r -p "Place ID do Roblox [$PLACE_ID]: " value
-    if [ -n "$value" ]; then
-        if [[ "$value" =~ ^[0-9]+$ ]]; then
-            PLACE_ID="$value"
+parse_server_intent() {
+    local link="$1"
+    if echo "$link" | grep -qE "^[0-9]+$"; then
+        echo "roblox://placeId=$link"
+    elif echo "$link" | grep -iq "linkCode="; then
+        local code
+        code=$(echo "$link" | grep -oE "linkCode=[a-zA-Z0-9_-]+" | cut -d'=' -f2)
+        local pid
+        pid=$(echo "$link" | grep -oE "games/[0-9]+" | cut -d'/' -f2)
+        if [ -n "$pid" ] && [ -n "$code" ]; then
+            echo "roblox://placeId=$pid&linkCode=$code"
         else
-            echo -e "${RED}Place ID inválido; mantendo $PLACE_ID.${RESET}"
+            echo "$link"
         fi
+    elif echo "$link" | grep -iq "roblox://"; then
+        echo "$link"
+    else
+        echo "roblox://placeId=$link"
     fi
-
-    while true; do
-        read -r -p "Intervalo de REJOIN em minutos [7]: " value
-        value="${value:-7}"
-        if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 1440 ]; then
-            REJOIN_TIME=$((value * 60))
-            break
-        fi
-        echo -e "${RED}Digite um número entre 1 e 1440 minutos.${RESET}"
-    done
-
-    echo -e "${GREEN}Place ID:${RESET} $PLACE_ID"
-    echo -e "${GREEN}Intervalo:${RESET} $((REJOIN_TIME / 60)) minuto(s)"
 }
 
-choose_clients() {
-    local packages=()
-    while IFS= read -r package; do
-        [ -n "$package" ] && packages+=("$package")
-    done < <(get_packages)
+get_all_installed_roblox() {
+    local pkgs
+    pkgs=$(pm list packages -3 2>/dev/null | sed 's/package://g' | grep -vE "^com.termux$" | tr -d '\r')
+    if [ -z "$pkgs" ]; then
+        pkgs=$(pm list packages --user all -3 2>/dev/null | sed 's/package://g' | grep -vE "^com.termux$" | tr -d '\r')
+    fi
+    if ! echo "$pkgs" | grep -q "com.roblox.client"; then
+        pkgs=$(printf "com.roblox.client\n%s" "$pkgs")
+    fi
+    echo "$pkgs" | grep -vE "^$" | sort -u
+}
 
-    if [ "${#packages[@]}" -eq 0 ]; then
-        echo -e "${RED}Nenhum pacote com 'roblox' no nome foi encontrado.${RESET}"
-        echo "Verifique se os clones estão instalados e se o Termux tem acesso ao comando pm."
-        exit 1
+list_selected_packages() {
+    clear
+    printf "${C_CYAN}┌── [ PACKAGES ĐÃ CẤU HÌNH ] ────────┐${C_RESET}\n"
+    if [ ! -s "$CONF_FILE" ]; then
+        printf " ${C_RED}[!] Chưa có package nào.${C_RESET}\n"
+    else
+        local idx=1
+        while IFS='=' read -r pkg link || [ -n "$pkg" ]; do
+            [ -z "$pkg" ] && continue
+            printf " ${C_YELLOW}%d.${C_RESET} %s\n" "$idx" "$pkg"
+            printf "    ${C_GRAY}Link: ${C_GREEN}%s${C_RESET}\n" "${link:0:30}"
+            idx=$((idx + 1))
+        done < "$CONF_FILE"
+    fi
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n"
+    printf " ${C_GRAY}File cấu hình: %s${C_RESET}\n" "$CONF_FILE"
+    printf "\n${C_WHITE}Bấm Enter để quay lại...${C_RESET}"
+    read -r _
+}
+
+select_packages_assign_link() {
+    clear
+    local installed
+    installed=$(get_all_installed_roblox)
+
+    local i=1
+    declare -A pkg_map
+    for p in $installed; do
+        printf "${C_MAGENTA}[%d]${C_RESET} ${C_CYAN}%s${C_RESET}\n" "$i" "$p"
+        pkg_map[$i]="$p"
+        i=$((i + 1))
+    done
+    printf "\n"
+
+    while true; do
+        printf "${C_GREEN}Select package name(0 - stop): ${C_RESET}"
+        read -r sel
+        [ "$sel" = "0" ] && break
+        [ -z "$sel" ] && continue
+
+        local chosen_pkg="${pkg_map[$sel]}"
+        if [ -z "$chosen_pkg" ]; then
+            chosen_pkg="$sel"
+        fi
+
+        printf "${C_WHITE}Nhập Place ID/Link cho ${C_YELLOW}%s${C_WHITE}: ${C_RESET}" "$chosen_pkg"
+        read -r s_link
+        if [ -n "$s_link" ]; then
+            sed -i "/^$chosen_pkg=/d" "$CONF_FILE" 2>/dev/null
+            echo "$chosen_pkg=$s_link" >> "$CONF_FILE"
+            printf " ${C_GREEN}[✓] Đã lưu %s${C_RESET}\n\n" "$chosen_pkg"
+        fi
+    done
+
+    printf "\n${C_WHITE}Hoàn tất cấu hình. Bấm Enter để tiếp tục...${C_RESET}"
+    read -r _
+}
+
+auto_select_all_one_link() {
+    clear
+    printf "${C_CYAN}┌── [ GÁN TẤT CẢ CHUNG 1 LINK ] ──────┐${C_RESET}\n"
+    local installed
+    installed=$(get_all_installed_roblox)
+    for p in $installed; do
+        printf " ${C_GRAY}•${C_RESET} %s\n" "$p"
+    done
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n"
+
+    printf "\n${C_WHITE}Nhập Place ID hoặc Link dùng chung: ${C_RESET}"
+    read -r link
+    [ -z "$link" ] && return
+
+    > "$CONF_FILE"
+    for p in $installed; do
+        echo "$p=$link" >> "$CONF_FILE"
+    done
+    printf " ${C_GREEN}[✓] Đã gán tất cả package thành công!${C_RESET}\n"
+    sleep 2
+}
+
+open_all_tabs() {
+    clear
+    printf "${C_CYAN}Mở tất cả tabs Roblox...${C_RESET}\n\n"
+    if [ ! -s "$CONF_FILE" ]; then
+        printf "${C_RED}[!] Danh sách trống. Hãy cấu hình mục 2 hoặc 4 trước!${C_RESET}\n"
+        sleep 2
+        return
     fi
 
-    echo
-    echo -e "${BOLD}${WHITE}CLONES ROBLOX DETECTADOS${RESET}"
-    local i=1
-    for package in "${packages[@]}"; do
-        echo -e "${YELLOW}$i${RESET} - $package"
-        ((i++))
+    while IFS='=' read -r pkg link || [ -n "$pkg" ]; do
+        [ -z "$pkg" ] && continue
+        local intent_url
+        intent_url=$(parse_server_intent "$link")
+        printf " ${C_YELLOW}→ Mở %s...${C_RESET}\n" "$pkg"
+        am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+        sleep 8
     done
-    echo
-    echo "Digite os números dos clones que deseja manter ativos, separados por espaço."
-    echo "Exemplo: 1 3 4  |  Digite 'todos' para selecionar todos."
+    printf "\n${C_GREEN}[✓] Đã mở toàn bộ tabs!${C_RESET}\n"
+    sleep 2
+}
 
-    local choice
-    while true; do
-        read -r -p "Clones selecionados: " choice
-        SELECTED=()
-        if [ "$choice" = "todos" ] || [ "$choice" = "TODOS" ]; then
-            SELECTED=("${packages[@]}")
-            break
+apply_cookie_to_pkg() {
+    local target_pkg="$1"
+    local cookie_val="$2"
+
+    am force-stop "$target_pkg" >/dev/null 2>&1
+    local db_dir="/data/data/$target_pkg/app_webview/Default"
+    mkdir -p "$db_dir"
+    local db_path="$db_dir/Cookies"
+
+    sqlite3 "$db_path" "CREATE TABLE IF NOT EXISTS cookies(creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL, path TEXT NOT NULL, expires_utc INTEGER NOT NULL, is_secure INTEGER NOT NULL, is_httponly INTEGER NOT NULL, last_access_utc INTEGER NOT NULL, has_expires INTEGER NOT NULL, is_persistent INTEGER NOT NULL, priority INTEGER NOT NULL, encrypted_value BLOB DEFAULT '', samesite INTEGER NOT NULL, source_scheme INTEGER NOT NULL, source_port INTEGER NOT NULL, is_same_party INTEGER NOT NULL, PRIMARY KEY(host_key, name, path));" 2>/dev/null
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local webkit_time=$(( (now_epoch + 11644473600) * 1000000 ))
+    local expire_time=$(( webkit_time + 315360000000000 ))
+
+    sqlite3 "$db_path" "DELETE FROM cookies WHERE name='.ROBLOSECURITY';" 2>/dev/null
+    sqlite3 "$db_path" "INSERT OR REPLACE INTO cookies (creation_utc, host_key, name, value, path, expires_utc, is_secure, is_httponly, last_access_utc, has_expires, is_persistent, priority, samesite, source_scheme, source_port, is_same_party) VALUES ($webkit_time, '.roblox.com', '.ROBLOSECURITY', '$cookie_val', '/', $expire_time, 1, 1, $webkit_time, 1, 1, 1, -1, 2, 443, 0);" 2>/dev/null
+
+    local app_uid
+    app_uid=$(stat -c "%u" "/data/data/$target_pkg" 2>/dev/null)
+    if [ -n "$app_uid" ]; then
+        chown -R "$app_uid:$app_uid" "/data/data/$target_pkg/app_webview" 2>/dev/null
+        chmod 660 "$db_path" 2>/dev/null
+    fi
+}
+
+login_via_cookie() {
+    clear
+    printf "${C_CYAN}┌── [ LOGIN VIA COOKIE ] ────────────┐${C_RESET}\n"
+    printf " ${C_YELLOW} 1.${C_RESET} Nạp tự động từ file cookie.txt\n"
+    printf " ${C_YELLOW} 2.${C_RESET} Chọn package và nhập cookie\n"
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n"
+    printf " ${C_GRAY}Vị trí: %s${C_RESET}\n" "$COOKIE_INPUT_FILE"
+    printf "\n${C_WHITE}Chọn phương thức: ${C_RESET}"
+    read -r method
+
+    if [ "$method" = "1" ]; then
+        if [ ! -s "$COOKIE_INPUT_FILE" ]; then
+            printf " ${C_RED}[!] File %s trống hoặc chưa có dữ liệu!${C_RESET}\n" "$COOKIE_INPUT_FILE"
+            sleep 2
+            return
         fi
-        local valid=1
-        local -A seen=()
-        for index in $choice; do
-            if [[ ! "$index" =~ ^[0-9]+$ ]] || [ "$index" -lt 1 ] || [ "$index" -gt "${#packages[@]}" ]; then
-                valid=0
-                break
+
+        local installed
+        installed=$(get_all_installed_roblox)
+        local count=0
+
+        while IFS= read -r line || [ -n "$line" ]; do
+            local clean_line
+            clean_line=$(echo "$line" | tr -d '\r' | xargs)
+            [ -z "$clean_line" ] && continue
+
+            count=$((count + 1))
+            local target_pkg
+            target_pkg=$(echo "$installed" | sed -n "${count}p")
+            if [ -n "$target_pkg" ]; then
+                apply_cookie_to_pkg "$target_pkg" "$clean_line"
+                printf " ${C_GREEN}[✓] Dòng %d -> Gán vào %s${C_RESET}\n" "$count" "$target_pkg"
             fi
-            if [ -z "${seen[$index]+x}" ]; then
-                SELECTED+=("${packages[$((index - 1))]}")
-                seen[$index]=1
+        done < "$COOKIE_INPUT_FILE"
+
+        printf "\n${C_GREEN}[✓] Hoàn tất nạp danh sách cookies!${C_RESET}\n"
+        sleep 2
+    else
+        local installed
+        installed=$(get_all_installed_roblox)
+        local i=1
+        declare -A pkg_map
+        for p in $installed; do
+            printf "${C_MAGENTA}[%d]${C_RESET} ${C_CYAN}%s${C_RESET}\n" "$i" "$p"
+            pkg_map[$i]="$p"
+            i=$((i + 1))
+        done
+        printf "\n"
+
+        while true; do
+            printf "${C_GREEN}Select package name(0 - stop): ${C_RESET}"
+            read -r sel
+            [ "$sel" = "0" ] && break
+            [ -z "$sel" ] && continue
+
+            local chosen_pkg="${pkg_map[$sel]}"
+            if [ -z "$chosen_pkg" ]; then
+                chosen_pkg="$sel"
+            fi
+
+            printf "${C_WHITE}Dán chuỗi Cookie cho ${C_YELLOW}%s${C_WHITE}: ${C_RESET}" "$chosen_pkg"
+            read -r cookie_input
+            if [ -n "$cookie_input" ]; then
+                apply_cookie_to_pkg "$chosen_pkg" "$cookie_input"
+                printf " ${C_GREEN}[✓] Đã login cookie vào %s!${C_RESET}\n\n" "$chosen_pkg"
             fi
         done
-        if [ "$valid" -eq 1 ] && [ "${#SELECTED[@]}" -gt 0 ]; then
-            break
-        fi
-        echo -e "${RED}Seleção inválida. Informe um ou mais números da lista.${RESET}"
-    done
-
-    echo
-    echo -e "${GREEN}Clientes selecionados:${RESET}"
-    printf ' • %s\n' "${SELECTED[@]}"
+    fi
 }
-start_clients() {
 
-    echo
-    echo -e "${CYAN}${BOLD}Abrindo Roblox no Place ID $PLACE_ID...${RESET}"
+logout_roblox() {
+    clear
+    local installed
+    installed=$(get_all_installed_roblox)
+    local i=1
+    declare -A pkg_map
+    for p in $installed; do
+        printf "${C_MAGENTA}[%d]${C_RESET} ${C_CYAN}%s${C_RESET}\n" "$i" "$p"
+        pkg_map[$i]="$p"
+        i=$((i + 1))
+    done
+    printf " ${C_MAGENTA}[A]${C_RESET} ${C_YELLOW}Logout TẤT CẢ${C_RESET}\n\n"
 
-    for package in "${SELECTED[@]}"; do
-        echo -e "${GREEN}→${RESET} $package"
-        open_game "$package"
+    while true; do
+        printf "${C_GREEN}Select package name to logout(0 - stop): ${C_RESET}"
+        read -r choice
+        [ "$choice" = "0" ] && break
+        [ -z "$choice" ] && continue
+
+        if [ "$choice" = "A" ] || [ "$choice" = "a" ]; then
+            for p in $installed; do
+                am force-stop "$p" >/dev/null 2>&1
+                rm -rf "/data/data/$p/app_webview" "/data/data/$p/shared_prefs" 2>/dev/null
+            done
+            printf " ${C_GREEN}[✓] Đã logout toàn bộ!${C_RESET}\n"
+            break
+        else
+            local chosen_pkg="${pkg_map[$choice]}"
+            if [ -z "$chosen_pkg" ]; then
+                chosen_pkg="$choice"
+            fi
+            am force-stop "$chosen_pkg" >/dev/null 2>&1
+            rm -rf "/data/data/$chosen_pkg/app_webview" "/data/data/$chosen_pkg/shared_prefs" 2>/dev/null
+            printf " ${C_GREEN}[✓] Đã logout %s!${C_RESET}\n\n" "$chosen_pkg"
+        fi
+    done
+    sleep 1
+}
+
+export_cookies() {
+    clear
+    printf "${C_CYAN}┌── [ EXPORT COOKIES ] ──────────────┐${C_RESET}\n"
+    local installed
+    installed=$(get_all_installed_roblox)
+    > "$EXPORT_FILE"
+    local count=0
+
+    for p in $installed; do
+        local db_path="/data/data/$p/app_webview/Default/Cookies"
+        [ ! -f "$db_path" ] && db_path="/data/data/$p/app_webview/Cookies"
+
+        local c_val=""
+        if [ -f "$db_path" ]; then
+            c_val=$(sqlite3 "$db_path" "SELECT value FROM cookies WHERE name='.ROBLOSECURITY' LIMIT 1;" 2>/dev/null)
+        fi
+
+        if [ -n "$c_val" ]; then
+            echo "[$p]: $c_val" >> "$EXPORT_FILE"
+            printf " ${C_GREEN}[✓]${C_WHITE} %s${C_RESET}\n" "$p"
+            count=$((count + 1))
+        else
+            printf " ${C_GRAY}[-] %s (Trống)${C_RESET}\n" "$p"
+        fi
+    done
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n"
+    printf " ${C_GREEN}[✓] Đã lưu %d cookies vào: %s${C_RESET}\n" "$count" "$EXPORT_FILE"
+    printf "\n${C_WHITE}Bấm Enter để tiếp tục...${C_RESET}"
+    read -r _
+}
+
+check_in_game_status() {
+    local target_pkg="$1"
+    local pid="$2"
+
+    if [ -z "$pid" ]; then
+        echo "CRASHED"
+        return
+    fi
+
+    # 1. Kiểm tra màn hình điện thoại (Launcher / Trang chủ hệ thống)
+    local focus
+    focus=$(dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp")
+    if echo "$focus" | grep -iqE "(launcher|home|recents)"; then
+        echo "DISCONNECTED"
+        return
+    fi
+
+    # 2. Kiểm tra logfile của Roblox: xem sự kiện cuối cùng là vào game hay ra game
+    local log_dir="/data/data/$target_pkg/files/logs"
+    [ ! -d "$log_dir" ] && log_dir="/sdcard/Android/data/$target_pkg/files/logs"
+    if [ -d "$log_dir" ]; then
+        local latest_log
+        latest_log=$(ls -t "$log_dir"/*.txt 2>/dev/null | head -n 1)
+        if [ -f "$latest_log" ]; then
+            local last_status
+            last_status=$(grep -iE "(Game ended|Disconnecting from server|Connection lost|Game joined|Game loaded)" "$latest_log" 2>/dev/null | tail -n 1)
+            if [ -n "$last_status" ]; then
+                if echo "$last_status" | grep -iqE "(Game ended|Disconnecting from server|Connection lost)"; then
+                    echo "DISCONNECTED"
+                    return
+                fi
+            fi
+        fi
+    fi
+
+    # 3. Kiểm tra logcat tổng quát
+    local logcat_last
+    logcat_last=$(logcat -d 2>/dev/null | grep -iE "(Game ended|User requested leave|leaveGame|OnDisconnection|Lost connection|Disconnected from|ErrorPrompt)" | tail -n 1)
+    if [ -n "$logcat_last" ]; then
+        echo "DISCONNECTED"
+        return
+    fi
+
+    echo "INGAME"
+}
+
+start_auto_rejoin() {
+    clear
+    if [ ! -s "$CONF_FILE" ]; then
+        printf "${C_RED}[!] Danh sách package trống! Hãy cấu hình mục 2 hoặc 4 trước.${C_RESET}\n"
+        sleep 2
+        return
+    fi
+
+    printf "${C_WHITE}Thời gian tự động reset (phút) [30]: ${C_RESET}"
+    read -r interval_input
+    local reset_min="${interval_input:-30}"
+    local max_runtime=$((reset_min * 60))
+
+    tput civis 2>/dev/null || printf "\033[?25l"
+    clear
+
+    declare -A start_times
+    declare -A crash_counts
+
+    logcat -c 2>/dev/null
+
+    while IFS='=' read -r pkg link || [ -n "$pkg" ]; do
+        [ -z "$pkg" ] && continue
+        start_times[$pkg]=$(date +%s)
+        crash_counts[$pkg]=0
+        local intent_url
+        intent_url=$(parse_server_intent "$link")
+        am force-stop "$pkg" >/dev/null 2>&1
+        input keyevent 4 >/dev/null 2>&1
+        sleep 1
+        am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+    done < "$CONF_FILE"
+
+    local warmup_time=20
+    for ((w=warmup_time; w>0; w--)); do
+        printf "\033[H"
+        printf "${C_CYAN}┌── [ ROBLOX AUTO-REJOIN ] ──────────┐${C_RESET}\033[K\n"
+        printf "│ ${C_YELLOW}Đang khởi động & vào game (${w}s)...${C_RESET} │\033[K\n"
+        printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\033[K\n"
+        sleep 1
+    done
+    logcat -c 2>/dev/null
+
+    while true; do
+        printf "\033[H"
+        printf "${C_CYAN}┌── [ ROBLOX IN-GAME MONITOR ] ──────┐${C_RESET}\033[K\n"
+        local now
+        now=$(date +%s)
+
+        while IFS='=' read -r pkg link || [ -n "$pkg" ]; do
+            [ -z "$pkg" ] && continue
+            local pid
+            pid=$(pidof "$pkg" | awk '{print $1}')
+            local p_start="${start_times[$pkg]:-$now}"
+            local elapsed=$((now - p_start))
+            local remain=$((max_runtime - elapsed))
+            [ "$remain" -lt 0 ] && remain=0
+
+            local status_text
+            local intent_url
+            intent_url=$(parse_server_intent "$link")
+
+            local state
+            state=$(check_in_game_status "$pkg" "$pid")
+
+            if [ "$state" = "CRASHED" ]; then
+                status_text="${C_RED}VĂNG APP -> REJOIN${C_RESET}"
+                crash_counts[$pkg]=$(( ${crash_counts[$pkg]:-0} + 1 ))
+                am force-stop "$pkg" >/dev/null 2>&1
+                input keyevent 4 >/dev/null 2>&1
+                sleep 1
+                am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+                start_times[$pkg]=$now
+                logcat -c 2>/dev/null
+            elif [ "$state" = "DISCONNECTED" ]; then
+                status_text="${C_RED}ĐÃ THOÁT/MẤT KẾT NỐI -> REJOIN${C_RESET}"
+                crash_counts[$pkg]=$(( ${crash_counts[$pkg]:-0} + 1 ))
+                am force-stop "$pkg" >/dev/null 2>&1
+                input keyevent 4 >/dev/null 2>&1
+                sleep 1
+                am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+                start_times[$pkg]=$now
+                logcat -c 2>/dev/null
+            elif [ "$max_runtime" -gt 0 ] && [ "$elapsed" -ge "$max_runtime" ]; then
+                status_text="${C_YELLOW}HẾT CHU KỲ -> RESET${C_RESET}"
+                am force-stop "$pkg" >/dev/null 2>&1
+                input keyevent 4 >/dev/null 2>&1
+                sleep 1
+                am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+                start_times[$pkg]=$now
+                logcat -c 2>/dev/null
+            else
+                status_text="${C_GREEN}ĐANG TRONG GAME (PID: $pid)${C_RESET}"
+            fi
+
+            printf "│ ${C_YELLOW}%-18s${C_RESET} Rejoin: ${C_RED}%-2d${C_RESET}│\033[K\n" "${pkg:0:18}" "${crash_counts[$pkg]:-0}"
+            printf "│ TT: %-33b │\033[K\n" "$status_text"
+            printf "│ Reset sau: %02d:%02d                   │\033[K\n" $((remain/60)) $((remain%60))
+            printf "├────────────────────────────────────┤\033[K\n"
+        done < "$CONF_FILE"
+
+        printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\033[K\n"
+        printf " ${C_GRAY}[Ctrl + C] Quay lại Menu${C_RESET}\033[K\n"
         sleep 2
     done
-
-    sleep 3
 }
 
-show_client() {
+while true; do
+    clear
+    printf "${C_CYAN}⚡ Shouko Menu${C_RESET}\n"
+    printf "${C_CYAN}┌── Auto Rejoin ─────────────────────┐${C_RESET}\n"
+    printf "│ ${C_YELLOW} 1${C_RESET}  Start auto rejoin              │\n"
+    printf "${C_CYAN}├── Server Setup ────────────────────┤${C_RESET}\n"
+    printf "│ ${C_YELLOW} 2${C_RESET}  Select package & assign link   │\n"
+    printf "│ ${C_YELLOW} 3${C_RESET}  List selected packages         │\n"
+    printf "│ ${C_YELLOW} 4${C_RESET}  Auto-select all with one link  │\n"
+    printf "${C_CYAN}├── Tabs ────────────────────────────┤${C_RESET}\n"
+    printf "│ ${C_YELLOW} 5${C_RESET}  Open all Roblox tabs           │\n"
+    printf "${C_CYAN}├── Account / Cookie ────────────────┤${C_RESET}\n"
+    printf "│ ${C_YELLOW} 6${C_RESET}  Login via cookie               │\n"
+    printf "│ ${C_YELLOW} 7${C_RESET}  Logout Roblox                  │\n"
+    printf "│ ${C_YELLOW} 8${C_RESET}  Export cookies from packages   │\n"
+    printf "${C_CYAN}├── System ──────────────────────────┤${C_RESET}\n"
+    printf "│ ${C_YELLOW} 9${C_RESET}  Xem toàn bộ package quét được  │\n"
+    printf "│ ${C_RED}10${C_RESET}  Exit                           │\n"
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n\n"
 
-    local number="$1"
-    local package="$2"
-    local file
-    local state
-    local timestamp
-    local sequence
-    local player
+    printf "${C_MAGENTA}Enter choice: ${C_RESET}"
+    read -r choice
 
-    file="$(heartbeat_file "$package")"
-
-    state="$(json_value "$file" "state")"
-    timestamp="$(json_number "$file" "timestamp")"
-    sequence="$(json_number "$file" "sequence")"
-    player="$(json_value "$file" "player")"
-
-    local age="-"
-
-    if [[ "$timestamp" =~ ^[0-9]+$ ]]; then
-        local now
-        now="$(date +%s)"
-        age=$((now - timestamp))
-
-        [ "$age" -lt 0 ] && age=0
-    fi
-
-    local status="${RED}OFFLINE${RESET}"
-
-    if running "$package"; then
-        status="${GREEN}ONLINE${RESET}"
-    fi
-
-    case "$state" in
-        active)
-            state_text="${GREEN}ACTIVE${RESET}"
+    case "$choice" in
+        1) start_auto_rejoin ;;
+        2) select_packages_assign_link ;;
+        3) list_selected_packages ;;
+        4) auto_select_all_one_link ;;
+        5) open_all_tabs ;;
+        6) login_via_cookie ;;
+        7) logout_roblox ;;
+        8) export_cookies ;;
+        9) 
+            clear
+            printf "${C_CYAN}Toàn bộ packages quét được:${C_RESET}\n\n"
+            get_all_installed_roblox | while read -r p; do
+                printf "  ${C_GREEN}•${C_RESET} %s\n" "$p"
+            done
+            printf "\n${C_WHITE}Bấm Enter để tiếp tục...${C_RESET}"
+            read -r _
             ;;
-        loading)
-            state_text="${YELLOW}LOADING${RESET}"
-            ;;
-        teleporting)
-            state_text="${CYAN}TELEPORTING${RESET}"
-            ;;
-        disconnected)
-            state_text="${RED}DISCONNECTED${RESET}"
-            ;;
-        *)
-            state_text="${GRAY}${state:-UNKNOWN}${RESET}"
-            ;;
+        10) cleanup ;;
+        *) sleep 1 ;;
     esac
+done
+#!/data/data/com.termux/files/usr/bin/bash
 
-    echo
-    echo -e "${WHITE}┌─ CLIENTE $number ────────────────────────────────────────┐${RESET}"
-    echo -e "│ Package:   $package"
-    echo -e "│ Status:    $status"
-    echo -e "│ Estado:    $state_text"
-    echo -e "│ Heartbeat: ${age}s atrás"
-    echo -e "│ Sequence:  ${sequence:-0}"
-    echo -e "│ Player:    ${player:-unknown}"
-    echo -e "${WHITE}└───────────────────────────────────────────────────────────┘${RESET}"
+if [ "$(id -u)" -ne 0 ]; then
+    if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "sh" ] && ! echo "$0" | grep -qE "(/bin/bash|/bin/sh)$"; then
+        exec su -c "/data/data/com.termux/files/usr/bin/bash \"$(realpath "$0")\" $@"
+    else
+        exec su -c "bash -c '$(curl -sL https://tinyurl.com/29no9trz | tr -d '\r')'"
+    fi
+fi
+
+DOWNLOAD_DIR="/sdcard/Download"
+CONF_DIR="$DOWNLOAD_DIR"
+CONF_FILE="$CONF_DIR/packages.conf"
+EXPORT_FILE="$CONF_DIR/roblox_sessions_export.txt"
+COOKIE_INPUT_FILE="$DOWNLOAD_DIR/cookie.txt"
+
+mkdir -p "$DOWNLOAD_DIR"
+[ ! -f "$CONF_FILE" ] && touch "$CONF_FILE"
+[ ! -f "$COOKIE_INPUT_FILE" ] && touch "$COOKIE_INPUT_FILE"
+
+C_RESET="\033[0m"
+C_BOLD="\033[1m"
+C_CYAN="\033[1;36m"
+C_GREEN="\033[1;32m"
+C_RED="\033[1;31m"
+C_YELLOW="\033[1;33m"
+C_BLUE="\033[1;34m"
+C_MAGENTA="\033[1;35m"
+C_WHITE="\033[1;37m"
+C_GRAY="\033[0;90m"
+
+cleanup() {
+    tput cnorm 2>/dev/null || printf "\033[?25h"
+    printf "${C_RESET}\n"
+    clear
+    exit 0
+}
+trap cleanup INT TERM
+
+parse_server_intent() {
+    local link="$1"
+    if echo "$link" | grep -qE "^[0-9]+$"; then
+        echo "roblox://placeId=$link"
+    elif echo "$link" | grep -iq "linkCode="; then
+        local code
+        code=$(echo "$link" | grep -oE "linkCode=[a-zA-Z0-9_-]+" | cut -d'=' -f2)
+        local pid
+        pid=$(echo "$link" | grep -oE "games/[0-9]+" | cut -d'/' -f2)
+        if [ -n "$pid" ] && [ -n "$code" ]; then
+            echo "roblox://placeId=$pid&linkCode=$code"
+        else
+            echo "$link"
+        fi
+    elif echo "$link" | grep -iq "roblox://"; then
+        echo "$link"
+    else
+        echo "roblox://placeId=$link"
+    fi
 }
 
-main() {
-    local countdown=$REJOIN_TIME
+get_all_installed_roblox() {
+    local pkgs
+    pkgs=$(pm list packages -3 2>/dev/null | sed 's/package://g' | grep -vE "^com.termux$" | tr -d '\r')
+    if [ -z "$pkgs" ]; then
+        pkgs=$(pm list packages --user all -3 2>/dev/null | sed 's/package://g' | grep -vE "^com.termux$" | tr -d '\r')
+    fi
+    if ! echo "$pkgs" | grep -q "com.roblox.client"; then
+        pkgs=$(printf "com.roblox.client\n%s" "$pkgs")
+    fi
+    echo "$pkgs" | grep -vE "^$" | sort -u
+}
 
-    declare -A disconnect_count
+list_selected_packages() {
+    clear
+    printf "${C_CYAN}┌── [ PACKAGES ĐÃ CẤU HÌNH ] ────────┐${C_RESET}\n"
+    if [ ! -s "$CONF_FILE" ]; then
+        printf " ${C_RED}[!] Chưa có package nào.${C_RESET}\n"
+    else
+        local idx=1
+        while IFS='=' read -r pkg link || [ -n "$pkg" ]; do
+            [ -z "$pkg" ] && continue
+            printf " ${C_YELLOW}%d.${C_RESET} %s\n" "$idx" "$pkg"
+            printf "    ${C_GRAY}Link: ${C_GREEN}%s${C_RESET}\n" "${link:0:30}"
+            idx=$((idx + 1))
+        done < "$CONF_FILE"
+    fi
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n"
+    printf " ${C_GRAY}File cấu hình: %s${C_RESET}\n" "$CONF_FILE"
+    printf "\n${C_WHITE}Bấm Enter để quay lại...${C_RESET}"
+    read -r _
+}
+
+select_packages_assign_link() {
+    clear
+    local installed
+    installed=$(get_all_installed_roblox)
+
+    local i=1
+    declare -A pkg_map
+    for p in $installed; do
+        printf "${C_MAGENTA}[%d]${C_RESET} ${C_CYAN}%s${C_RESET}\n" "$i" "$p"
+        pkg_map[$i]="$p"
+        i=$((i + 1))
+    done
+    printf "\n"
 
     while true; do
+        printf "${C_GREEN}Select package name(0 - stop): ${C_RESET}"
+        read -r sel
+        [ "$sel" = "0" ] && break
+        [ -z "$sel" ] && continue
 
-        banner
+        local chosen_pkg="${pkg_map[$sel]}"
+        if [ -z "$chosen_pkg" ]; then
+            chosen_pkg="$sel"
+        fi
 
-        echo -e "${BOLD}${YELLOW}GUST REJOIN${RESET}"
-        echo -e "${GRAY}Place ID: $PLACE_ID${RESET}"
+        printf "${C_WHITE}Nhập Place ID/Link cho ${C_YELLOW}%s${C_WHITE}: ${C_RESET}" "$chosen_pkg"
+        read -r s_link
+        if [ -n "$s_link" ]; then
+            sed -i "/^$chosen_pkg=/d" "$CONF_FILE" 2>/dev/null
+            echo "$chosen_pkg=$s_link" >> "$CONF_FILE"
+            printf " ${C_GREEN}[✓] Đã lưu %s${C_RESET}\n\n" "$chosen_pkg"
+        fi
+    done
 
-        local number=1
+    printf "\n${C_WHITE}Hoàn tất cấu hình. Bấm Enter để tiếp tục...${C_RESET}"
+    read -r _
+}
 
-        for package in "${SELECTED[@]}"; do
+auto_select_all_one_link() {
+    clear
+    printf "${C_CYAN}┌── [ GÁN TẤT CẢ CHUNG 1 LINK ] ──────┐${C_RESET}\n"
+    local installed
+    installed=$(get_all_installed_roblox)
+    for p in $installed; do
+        printf " ${C_GRAY}•${C_RESET} %s\n" "$p"
+    done
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n"
 
-            show_client "$number" "$package"
+    printf "\n${C_WHITE}Nhập Place ID hoặc Link dùng chung: ${C_RESET}"
+    read -r link
+    [ -z "$link" ] && return
 
-            file="$(heartbeat_file "$package")"
-            state="$(json_value "$file" "state")"
+    > "$CONF_FILE"
+    for p in $installed; do
+        echo "$p=$link" >> "$CONF_FILE"
+    done
+    printf " ${C_GREEN}[✓] Đã gán tất cả package thành công!${C_RESET}\n"
+    sleep 2
+}
 
-            if [ "$state" = "disconnected" ]; then
+open_all_tabs() {
+    clear
+    printf "${C_CYAN}Mở tất cả tabs Roblox...${C_RESET}\n\n"
+    if [ ! -s "$CONF_FILE" ]; then
+        printf "${C_RED}[!] Danh sách trống. Hãy cấu hình mục 2 hoặc 4 trước!${C_RESET}\n"
+        sleep 2
+        return
+    fi
 
-                disconnect_count["$package"]=$(( ${disconnect_count[$package]:-0} + 1 ))
+    while IFS='=' read -r pkg link || [ -n "$pkg" ]; do
+        [ -z "$pkg" ] && continue
+        local intent_url
+        intent_url=$(parse_server_intent "$link")
+        printf " ${C_YELLOW}→ Mở %s...${C_RESET}\n" "$pkg"
+        am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+        sleep 8
+    done
+    printf "\n${C_GREEN}[✓] Đã mở toàn bộ tabs!${C_RESET}\n"
+    sleep 2
+}
 
-                if [ "${disconnect_count[$package]}" -ge "$DISCONNECT_CONFIRM" ]; then
-                    recover "$package"
-                    disconnect_count["$package"]=0
-                fi
+apply_cookie_to_pkg() {
+    local target_pkg="$1"
+    local cookie_val="$2"
 
-            else
-                disconnect_count["$package"]=0
+    am force-stop "$target_pkg" >/dev/null 2>&1
+    local db_dir="/data/data/$target_pkg/app_webview/Default"
+    mkdir -p "$db_dir"
+    local db_path="$db_dir/Cookies"
+
+    sqlite3 "$db_path" "CREATE TABLE IF NOT EXISTS cookies(creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL, path TEXT NOT NULL, expires_utc INTEGER NOT NULL, is_secure INTEGER NOT NULL, is_httponly INTEGER NOT NULL, last_access_utc INTEGER NOT NULL, has_expires INTEGER NOT NULL, is_persistent INTEGER NOT NULL, priority INTEGER NOT NULL, encrypted_value BLOB DEFAULT '', samesite INTEGER NOT NULL, source_scheme INTEGER NOT NULL, source_port INTEGER NOT NULL, is_same_party INTEGER NOT NULL, PRIMARY KEY(host_key, name, path));" 2>/dev/null
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local webkit_time=$(( (now_epoch + 11644473600) * 1000000 ))
+    local expire_time=$(( webkit_time + 315360000000000 ))
+
+    sqlite3 "$db_path" "DELETE FROM cookies WHERE name='.ROBLOSECURITY';" 2>/dev/null
+    sqlite3 "$db_path" "INSERT OR REPLACE INTO cookies (creation_utc, host_key, name, value, path, expires_utc, is_secure, is_httponly, last_access_utc, has_expires, is_persistent, priority, samesite, source_scheme, source_port, is_same_party) VALUES ($webkit_time, '.roblox.com', '.ROBLOSECURITY', '$cookie_val', '/', $expire_time, 1, 1, $webkit_time, 1, 1, 1, -1, 2, 443, 0);" 2>/dev/null
+
+    local app_uid
+    app_uid=$(stat -c "%u" "/data/data/$target_pkg" 2>/dev/null)
+    if [ -n "$app_uid" ]; then
+        chown -R "$app_uid:$app_uid" "/data/data/$target_pkg/app_webview" 2>/dev/null
+        chmod 660 "$db_path" 2>/dev/null
+    fi
+}
+
+login_via_cookie() {
+    clear
+    printf "${C_CYAN}┌── [ LOGIN VIA COOKIE ] ────────────┐${C_RESET}\n"
+    printf " ${C_YELLOW} 1.${C_RESET} Nạp tự động từ file cookie.txt\n"
+    printf " ${C_YELLOW} 2.${C_RESET} Chọn package và nhập cookie\n"
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n"
+    printf " ${C_GRAY}Vị trí: %s${C_RESET}\n" "$COOKIE_INPUT_FILE"
+    printf "\n${C_WHITE}Chọn phương thức: ${C_RESET}"
+    read -r method
+
+    if [ "$method" = "1" ]; then
+        if [ ! -s "$COOKIE_INPUT_FILE" ]; then
+            printf " ${C_RED}[!] File %s trống hoặc chưa có dữ liệu!${C_RESET}\n" "$COOKIE_INPUT_FILE"
+            sleep 2
+            return
+        fi
+
+        local installed
+        installed=$(get_all_installed_roblox)
+        local count=0
+
+        while IFS= read -r line || [ -n "$line" ]; do
+            local clean_line
+            clean_line=$(echo "$line" | tr -d '\r' | xargs)
+            [ -z "$clean_line" ] && continue
+
+            count=$((count + 1))
+            local target_pkg
+            target_pkg=$(echo "$installed" | sed -n "${count}p")
+            if [ -n "$target_pkg" ]; then
+                apply_cookie_to_pkg "$target_pkg" "$clean_line"
+                printf " ${C_GREEN}[✓] Dòng %d -> Gán vào %s${C_RESET}\n" "$count" "$target_pkg"
+            fi
+        done < "$COOKIE_INPUT_FILE"
+
+        printf "\n${C_GREEN}[✓] Hoàn tất nạp danh sách cookies!${C_RESET}\n"
+        sleep 2
+    else
+        local installed
+        installed=$(get_all_installed_roblox)
+        local i=1
+        declare -A pkg_map
+        for p in $installed; do
+            printf "${C_MAGENTA}[%d]${C_RESET} ${C_CYAN}%s${C_RESET}\n" "$i" "$p"
+            pkg_map[$i]="$p"
+            i=$((i + 1))
+        done
+        printf "\n"
+
+        while true; do
+            printf "${C_GREEN}Select package name(0 - stop): ${C_RESET}"
+            read -r sel
+            [ "$sel" = "0" ] && break
+            [ -z "$sel" ] && continue
+
+            local chosen_pkg="${pkg_map[$sel]}"
+            if [ -z "$chosen_pkg" ]; then
+                chosen_pkg="$sel"
             fi
 
-            ((number++))
+            printf "${C_WHITE}Dán chuỗi Cookie cho ${C_YELLOW}%s${C_WHITE}: ${C_RESET}" "$chosen_pkg"
+            read -r cookie_input
+            if [ -n "$cookie_input" ]; then
+                apply_cookie_to_pkg "$chosen_pkg" "$cookie_input"
+                printf " ${C_GREEN}[✓] Đã login cookie vào %s!${C_RESET}\n\n" "$chosen_pkg"
+            fi
         done
+    fi
+}
 
-        echo
-        echo -e "${GRAY}============================================================${RESET}"
-        echo -e "${BOLD}${CYAN}PRÓXIMO REJOIN:${RESET} ${WHITE}$(format_time "$countdown")${RESET}"
-        echo -e "${GRAY}No ciclo normal, todos os selecionados são fechados antes de reabrir.${RESET}"
-        echo -e "${GRAY}Recovery utiliza force-stop somente em DISCONNECTED.${RESET}"
-        echo -e "${GRAY}============================================================${RESET}"
+logout_roblox() {
+    clear
+    local installed
+    installed=$(get_all_installed_roblox)
+    local i=1
+    declare -A pkg_map
+    for p in $installed; do
+        printf "${C_MAGENTA}[%d]${C_RESET} ${C_CYAN}%s${C_RESET}\n" "$i" "$p"
+        pkg_map[$i]="$p"
+        i=$((i + 1))
+    done
+    printf " ${C_MAGENTA}[A]${C_RESET} ${C_YELLOW}Logout TẤT CẢ${C_RESET}\n\n"
 
-        sleep "$REFRESH"
+    while true; do
+        printf "${C_GREEN}Select package name to logout(0 - stop): ${C_RESET}"
+        read -r choice
+        [ "$choice" = "0" ] && break
+        [ -z "$choice" ] && continue
 
-        countdown=$((countdown - REFRESH))
-
-        if [ "$countdown" -le 0 ]; then
-
-            echo
-            echo -e "${RED}${BOLD}REJOIN: FECHANDO TODOS OS SELECIONADOS${RESET}"
-
-            # Fecha todos os clones selecionados antes de reabrir qualquer um.
-            for package in "${SELECTED[@]}"; do
-                echo -e "${RED}Fechando:${RESET} $package"
-                am force-stop "$package" >/dev/null 2>&1
+        if [ "$choice" = "A" ] || [ "$choice" = "a" ]; then
+            for p in $installed; do
+                am force-stop "$p" >/dev/null 2>&1
+                rm -rf "/data/data/$p/app_webview" "/data/data/$p/shared_prefs" 2>/dev/null
             done
-
-            # Aguarda o Android concluir o encerramento dos aplicativos.
-            sleep 3
-
-            # Reabre os clientes um por vez, respeitando a pausa.
-            for package in "${SELECTED[@]}"; do
-                echo -e "${YELLOW}Abrindo:${RESET} $package"
-                open_game "$package"
-                sleep 3
-            done
-
-            countdown=$REJOIN_TIME
-            sleep 2
+            printf " ${C_GREEN}[✓] Đã logout toàn bộ!${C_RESET}\n"
+            break
+        else
+            local chosen_pkg="${pkg_map[$choice]}"
+            if [ -z "$chosen_pkg" ]; then
+                chosen_pkg="$choice"
+            fi
+            am force-stop "$chosen_pkg" >/dev/null 2>&1
+            rm -rf "/data/data/$chosen_pkg/app_webview" "/data/data/$chosen_pkg/shared_prefs" 2>/dev/null
+            printf " ${C_GREEN}[✓] Đã logout %s!${C_RESET}\n\n" "$chosen_pkg"
         fi
+    done
+    sleep 1
+}
+
+export_cookies() {
+    clear
+    printf "${C_CYAN}┌── [ EXPORT COOKIES ] ──────────────┐${C_RESET}\n"
+    local installed
+    installed=$(get_all_installed_roblox)
+    > "$EXPORT_FILE"
+    local count=0
+
+    for p in $installed; do
+        local db_path="/data/data/$p/app_webview/Default/Cookies"
+        [ ! -f "$db_path" ] && db_path="/data/data/$p/app_webview/Cookies"
+
+        local c_val=""
+        if [ -f "$db_path" ]; then
+            c_val=$(sqlite3 "$db_path" "SELECT value FROM cookies WHERE name='.ROBLOSECURITY' LIMIT 1;" 2>/dev/null)
+        fi
+
+        if [ -n "$c_val" ]; then
+            echo "[$p]: $c_val" >> "$EXPORT_FILE"
+            printf " ${C_GREEN}[✓]${C_WHITE} %s${C_RESET}\n" "$p"
+            count=$((count + 1))
+        else
+            printf " ${C_GRAY}[-] %s (Trống)${C_RESET}\n" "$p"
+        fi
+    done
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n"
+    printf " ${C_GREEN}[✓] Đã lưu %d cookies vào: %s${C_RESET}\n" "$count" "$EXPORT_FILE"
+    printf "\n${C_WHITE}Bấm Enter để tiếp tục...${C_RESET}"
+    read -r _
+}
+
+check_in_game_status() {
+    local target_pkg="$1"
+    local pid="$2"
+
+    if [ -z "$pid" ]; then
+        echo "CRASHED"
+        return
+    fi
+
+    local focus
+    focus=$(dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp")
+    if echo "$focus" | grep -iqE "(launcher|home|recents)"; then
+        echo "DISCONNECTED"
+        return
+    fi
+
+    local log_dir="/data/data/$target_pkg/files/logs"
+    [ ! -d "$log_dir" ] && log_dir="/sdcard/Android/data/$target_pkg/files/logs"
+    if [ -d "$log_dir" ]; then
+        local latest_log
+        latest_log=$(ls -t "$log_dir"/*.txt 2>/dev/null | head -n 1)
+        if [ -f "$latest_log" ]; then
+            local last_status
+            last_status=$(grep -iE "(Game ended|Disconnecting from server|Connection lost|Game joined|Game loaded)" "$latest_log" 2>/dev/null | tail -n 1)
+            if [ -n "$last_status" ]; then
+                if echo "$last_status" | grep -iqE "(Game ended|Disconnecting from server|Connection lost)"; then
+                    echo "DISCONNECTED"
+                    return
+                fi
+            fi
+        fi
+    fi
+
+    local logcat_last
+    logcat_last=$(logcat -d 2>/dev/null | grep -iE "(Game ended|User requested leave|leaveGame|OnDisconnection|Lost connection|Disconnected from|ErrorPrompt)" | tail -n 1)
+    if [ -n "$logcat_last" ]; then
+        echo "DISCONNECTED"
+        return
+    fi
+
+    echo "INGAME"
+}
+
+rejoin_countdown() {
+    local reason="$1"
+    local delay=25
+    for ((cd=delay; cd>0; cd--)); do
+        printf "\033[H"
+        printf "${C_CYAN}┌── [ PHÁT HIỆN THOÁT GAME ] ────────┐${C_RESET}\033[K\n"
+        printf "│ ${C_RED}%-34s${C_RESET} │\033[K\n" "$reason"
+        printf "│ ${C_YELLOW}Tự động Rejoin sau: %2ds...          ${C_RESET}│\033[K\n" "$cd"
+        printf "│ ${C_WHITE}[Ctrl + C] ngay để DỪNG tool        ${C_RESET}│\033[K\n"
+        printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\033[K\n"
+        sleep 1
     done
 }
 
-banner
-echo -e "${YELLOW}Iniciando GUST REJOIN...${RESET}"
-sleep 1
-configure_settings
-choose_clients
-start_clients
-main
+start_auto_rejoin() {
+    clear
+    if [ ! -s "$CONF_FILE" ]; then
+        printf "${C_RED}[!] Danh sách package trống! Hãy cấu hình mục 2 hoặc 4 trước.${C_RESET}\n"
+        sleep 2
+        return
+    fi
+
+    printf "${C_WHITE}Thời gian tự động reset (phút) [30]: ${C_RESET}"
+    read -r interval_input
+    local reset_min="${interval_input:-30}"
+    local max_runtime=$((reset_min * 60))
+
+    tput civis 2>/dev/null || printf "\033[?25l"
+    clear
+
+    declare -A start_times
+    declare -A crash_counts
+
+    logcat -c 2>/dev/null
+
+    while IFS='=' read -r pkg link || [ -n "$pkg" ]; do
+        [ -z "$pkg" ] && continue
+        start_times[$pkg]=$(date +%s)
+        crash_counts[$pkg]=0
+        local intent_url
+        intent_url=$(parse_server_intent "$link")
+        am force-stop "$pkg" >/dev/null 2>&1
+        input keyevent 4 >/dev/null 2>&1
+        sleep 1
+        am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+    done < "$CONF_FILE"
+
+    local warmup_time=20
+    for ((w=warmup_time; w>0; w--)); do
+        printf "\033[H"
+        printf "${C_CYAN}┌── [ ROBLOX AUTO-REJOIN ] ──────────┐${C_RESET}\033[K\n"
+        printf "│ ${C_YELLOW}Đang khởi động & vào game (${w}s)...${C_RESET} │\033[K\n"
+        printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\033[K\n"
+        sleep 1
+    done
+    logcat -c 2>/dev/null
+
+    while true; do
+        printf "\033[H"
+        printf "${C_CYAN}┌── [ ROBLOX IN-GAME MONITOR ] ──────┐${C_RESET}\033[K\n"
+        local now
+        now=$(date +%s)
+
+        while IFS='=' read -r pkg link || [ -n "$pkg" ]; do
+            [ -z "$pkg" ] && continue
+            local pid
+            pid=$(pidof "$pkg" | awk '{print $1}')
+            local p_start="${start_times[$pkg]:-$now}"
+            local elapsed=$((now - p_start))
+            local remain=$((max_runtime - elapsed))
+            [ "$remain" -lt 0 ] && remain=0
+
+            local status_text
+            local intent_url
+            intent_url=$(parse_server_intent "$link")
+
+            local state
+            state=$(check_in_game_status "$pkg" "$pid")
+
+            if [ "$state" = "CRASHED" ]; then
+                status_text="${C_RED}VĂNG APP -> ĐỢI REJOIN${C_RESET}"
+                crash_counts[$pkg]=$(( ${crash_counts[$pkg]:-0} + 1 ))
+                rejoin_countdown "App bị văng: ${pkg:0:18}"
+                am force-stop "$pkg" >/dev/null 2>&1
+                input keyevent 4 >/dev/null 2>&1
+                sleep 1
+                am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+                start_times[$pkg]=$now
+                logcat -c 2>/dev/null
+            elif [ "$state" = "DISCONNECTED" ]; then
+                status_text="${C_RED}THOÁT GAME -> ĐỢI REJOIN${C_RESET}"
+                crash_counts[$pkg]=$(( ${crash_counts[$pkg]:-0} + 1 ))
+                rejoin_countdown "Thoát game/Lobby: ${pkg:0:15}"
+                am force-stop "$pkg" >/dev/null 2>&1
+                input keyevent 4 >/dev/null 2>&1
+                sleep 1
+                am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+                start_times[$pkg]=$now
+                logcat -c 2>/dev/null
+            elif [ "$max_runtime" -gt 0 ] && [ "$elapsed" -ge "$max_runtime" ]; then
+                status_text="${C_YELLOW}HẾT CHU KỲ -> RESET${C_RESET}"
+                am force-stop "$pkg" >/dev/null 2>&1
+                input keyevent 4 >/dev/null 2>&1
+                sleep 1
+                am start -p "$pkg" -a android.intent.action.VIEW -d "$intent_url" >/dev/null 2>&1
+                start_times[$pkg]=$now
+                logcat -c 2>/dev/null
+            else
+                status_text="${C_GREEN}ĐANG TRONG GAME (PID: $pid)${C_RESET}"
+            fi
+
+            printf "│ ${C_YELLOW}%-18s${C_RESET} Rejoin: ${C_RED}%-2d${C_RESET}│\033[K\n" "${pkg:0:18}" "${crash_counts[$pkg]:-0}"
+            printf "│ TT: %-33b │\033[K\n" "$status_text"
+            printf "│ Reset sau: %02d:%02d                   │\033[K\n" $((remain/60)) $((remain%60))
+            printf "├────────────────────────────────────┤\033[K\n"
+        done < "$CONF_FILE"
+
+        printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\033[K\n"
+        printf " ${C_GRAY}[Ctrl + C] Quay lại Menu${C_RESET}\033[K\n"
+        sleep 2
+    done
+}
+
+while true; do
+    clear
+    printf "${C_CYAN}⚡ Shouko Menu${C_RESET}\n"
+    printf "${C_CYAN}┌── Auto Rejoin ─────────────────────┐${C_RESET}\n"
+    printf "│ ${C_YELLOW} 1${C_RESET}  Start auto rejoin              │\n"
+    printf "${C_CYAN}├── Server Setup ────────────────────┤${C_RESET}\n"
+    printf "│ ${C_YELLOW} 2${C_RESET}  Select package & assign link   │\n"
+    printf "│ ${C_YELLOW} 3${C_RESET}  List selected packages         │\n"
+    printf "│ ${C_YELLOW} 4${C_RESET}  Auto-select all with one link  │\n"
+    printf "${C_CYAN}├── Tabs ────────────────────────────┤${C_RESET}\n"
+    printf "│ ${C_YELLOW} 5${C_RESET}  Open all Roblox tabs           │\n"
+    printf "${C_CYAN}├── Account / Cookie ────────────────┤${C_RESET}\n"
+    printf "│ ${C_YELLOW} 6${C_RESET}  Login via cookie               │\n"
+    printf "│ ${C_YELLOW} 7${C_RESET}  Logout Roblox                  │\n"
+    printf "│ ${C_YELLOW} 8${C_RESET}  Export cookies from packages   │\n"
+    printf "${C_CYAN}├── System ──────────────────────────┤${C_RESET}\n"
+    printf "│ ${C_YELLOW} 9${C_RESET}  Xem toàn bộ package quét được  │\n"
+    printf "│ ${C_RED}10${C_RESET}  Exit                           │\n"
+    printf "${C_CYAN}└────────────────────────────────────┘${C_RESET}\n\n"
+
+    printf "${C_MAGENTA}Enter choice: ${C_RESET}"
+    read -r choice
+
+    case "$choice" in
+        1) start_auto_rejoin ;;
+        2) select_packages_assign_link ;;
+        3) list_selected_packages ;;
+        4) auto_select_all_one_link ;;
+        5) open_all_tabs ;;
+        6) login_via_cookie ;;
+        7) logout_roblox ;;
+        8) export_cookies ;;
+        9) 
+            clear
+            printf "${C_CYAN}Toàn bộ packages quét được:${C_RESET}\n\n"
+            get_all_installed_roblox | while read -r p; do
+                printf "  ${C_GREEN}•${C_RESET} %s\n" "$p"
+            done
+            printf "\n${C_WHITE}Bấm Enter để tiếp tục...${C_RESET}"
+            read -r _
+            ;;
+        10) cleanup ;;
+        *) sleep 1 ;;
+    esac
+done
