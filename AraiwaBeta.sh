@@ -50,12 +50,34 @@ ACCOUNTS=(
 )
 
 ERROR_PATTERNS=(
-  "Error Code: 279" "Error Code: 290" "Error Code: 260"
-  "Error Code: 267" "Error Code: 272" "Error Code: 517"
-  "Error Code: 769" "Error Code: 286" "Error Code: 273"
+  # --- Error Codes (Joining & In-Game) ---
+  "Error Code: 0" "Error Code: 103" "Error Code: 110" 
+  "Error Code: 256" "Error Code: 260" "Error Code: 261" 
+  "Error Code: 262" "Error Code: 264" "Error Code: 266" 
+  "Error Code: 267" "Error Code: 268" "Error Code: 271" 
+  "Error Code: 272" "Error Code: 273" "Error Code: 274" 
+  "Error Code: 275" "Error Code: 276" "Error Code: 277" 
+  "Error Code: 278" "Error Code: 279" "Error Code: 280" 
+  "Error Code: 282" "Error Code: 284" "Error Code: 285" 
+  "Error Code: 286" "Error Code: 288" "Error Code: 290" 
+  "Error Code: 291" "Error Code: 292"
+
+  # --- Error Codes (Service & Platform) ---
+  "Error Code: 400" "Error Code: 403" "Error Code: 429" 
+  "Error Code: 517" "Error Code: 524" "Error Code: 525" 
+  "Error Code: 528" "Error Code: 529" "Error Code: 533" 
+  "Error Code: 769" "Error Code: 901" "Error Code: 1001"
+
+  # --- Connection & Network Messages ---
   "Connection timed out" "Unable to connect" "Lost connection"
   "disconnected" "Network error" "socket error"
+  "You have been disconnected" "Connection attempt failed"
+  "HTTP error" "HttpError"
+
+  # --- Game State & Kicks ---
   "kicked from" "teleport failed" "game has shut"
+  "You have been kicked" "Player has been removed"
+  "server has shut down" "shut down for maintenance"
 )
 
 # ── COLORS ───────────────────────────────────────────────────
