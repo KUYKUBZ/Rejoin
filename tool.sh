@@ -43,7 +43,7 @@ case "$choice" in
         while IFS= read -r pkg; do
             [ -z "$pkg" ] && continue
 
-            Realfile="${data}${pkg}/files/gloop/Autoexecute"
+            Realfile="${data}${pkg}/files/gloop/external/Autoexecute"
 
             create_file "$Realfile" "$name" "$script"
 
