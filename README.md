@@ -9,6 +9,6 @@ bash Araiwa.sh
 ```
 # Beta
 ```lua
-curl -L "https://github.com/KUYKUBZ/Rejoin/raw/refs/heads/main/AraiwaBeta.sh" -o AraiwaBeta.sh
-bash AraiwaBeta.sh
+curl -L "https://github.com/KUYKUBZ/Rejoin/raw/refs/heads/main/tool.sh" -o tool.sh
+bash tool.sh
 ```
