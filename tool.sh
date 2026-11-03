@@ -74,15 +74,23 @@ case "$choice" in
     3)
         read -rp "Pastebin link: " link
         read -rp "File name: " name
-
+        
         mkdir -p "${emulated}DownloadConfig"
-
-        if [[ "$link" == *pastebin.com/* ]]; then
-            link="${link/pastebin.com/pastebin.com\/raw}"
-        fi
-
-        curl -fLsS "$link" -o "${emulated}DownloadConfig/$name"
-
+        
+        [[ -z "$link" || -z "$name" ]] && {
+            echo "[ERROR] Invalid input"
+            return 1
+        }
+        
+        curl -fL --retry 3 --connect-timeout 15 \
+            -A "Mozilla/5.0" \
+            "$link" \
+            -o "${emulated}DownloadConfig/$name" || {
+                echo "[ERROR] Download failed"
+                rm -f "${emulated}DownloadConfig/$name"
+                return 1
+            }
+        
         echo "[SUCCESS] Download complete"
         sleep 1
         clear
