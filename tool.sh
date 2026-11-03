@@ -18,13 +18,18 @@ create_file() {
     echo "[SUCCESS] Created: ${filepath%/}/$filename"
 }
 
+emulated="/storage/emulated/0/"
+mkdir -p "$emulated/DownloadConfig"
+
 data="/storage/emulated/0/Android/data/"
 delta="/storage/emulated/0/Delta"
 
 echo
 echo " [1] Setup in $data"
 echo " [2] Setup in $delta"
-echo " [3] Install REJOIN [~/run] or [~/run --auto]"
+echo " [3] load config by pastebin link to download"
+echo " [4] Install REJOIN [~/run] or [~/run --auto]"
+echo " [5] Exit"
 echo
 
 read -rp "Select method: " choice
@@ -66,13 +71,32 @@ case "$choice" in
         clear
         bash tool.sh
         ;;
-
     3)
+        read -rp "Pastebin link: " link
+        read -rp "File name: " name
+
+        mkdir -p "${emulated}DownloadConfig"
+
+        if [[ "$link" == *pastebin.com/* ]]; then
+            link="${link/pastebin.com/pastebin.com\/raw}"
+        fi
+
+        curl -fLsS "$link" -o "${emulated}DownloadConfig/$name"
+
+        echo "[SUCCESS] Download complete"
+        sleep 1
+        clear
+        bash tool.sh
+        ;;
+
+    4)
         echo "Install REJOIN"
         sleep 2
         curl -sL https://raw.githubusercontent.com/KUYKUBZ/nefrejoin/refs/heads/main/rejoin.sh | bash
         ;;
-
+    5)
+        exit 0
+        ;;
     *)
         echo "Invalid option."
         sleep 1
