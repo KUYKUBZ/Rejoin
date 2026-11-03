@@ -48,6 +48,9 @@ case "$choice" in
             create_file "$Realfile" "$name" "$script"
 
         done < <(get_packages)
+        sleep 1
+        clear
+        bash tool.sh
         ;;
 
     2)
@@ -60,6 +63,8 @@ case "$choice" in
         read -r script
 
         create_file "$delta/Autoexecute" "$name" "$script"
+        clear
+        bash tool.sh
         ;;
 
     3)
