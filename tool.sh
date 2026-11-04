@@ -2,20 +2,60 @@
 
 clear
 
+
 get_packages() {
-    pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
+    pm list packages |
+        grep -Ei 'roblox|delt' |
+        sed 's/package://'
 }
 
-create_file() {
-    local filepath="$1"
-    local filename="$2"
-    local src="$3"
+auto_resize() {
+    local WIDTH="$1"
+    local HEIGHT="$2"
+    local pkg
+    local TASK_ID
+    local X=0 Y=0
 
-    mkdir -p "$filepath" || return 1
+    command -v su >/dev/null 2>&1 || {
+        echo "[ERROR] Root not available"
+        return 1
+    }
 
-    printf '%s\n' "$src" > "${filepath%/}/$filename" || return 1
+    [[ "$WIDTH" =~ ^[0-9]+$ && "$HEIGHT" =~ ^[0-9]+$ ]] || {
+        echo "[ERROR] Invalid size"
+        return 1
+    }
 
-    echo "[SUCCESS] Created: ${filepath%/}/$filename"
+    while IFS= read -r pkg; do
+        [ -z "$pkg" ] && continue
+
+        echo "[FOUND] $pkg"
+
+        TASK_ID=$(
+            su -c 'dumpsys activity recents' 2>/dev/null |
+            awk -v pkg="$pkg" '
+                index($0, pkg) {
+                    if (match($0, /#[0-9]+/)) {
+                        print substr($0, RSTART+1, RLENGTH-1)
+                        exit
+                    }
+                }
+            '
+        )
+
+        if [[ ! "$TASK_ID" =~ ^[0-9]+$ ]]; then
+            echo "[SKIP] Task not found: $pkg"
+            continue
+        fi
+
+        local RIGHT=$((X + WIDTH))
+        local BOTTOM=$((Y + HEIGHT))
+
+        echo "[RESIZE] $pkg Task=$TASK_ID"
+
+        su -c "am task resize $TASK_ID $X $Y $RIGHT $BOTTOM"
+
+    done < <(get_packages)
 }
 
 emulated="/storage/emulated/0/"
@@ -28,8 +68,9 @@ echo
 echo " [1] Setup in $data"
 echo " [2] Setup in $delta"
 echo " [3] load config by pastebin link to download"
-echo " [4] Install REJOIN [~/run] or [~/run --auto]"
-echo " [5] Exit"
+echo " [4] Auto Resize"
+echo " [5] Install REJOIN [~/run] or [~/run --auto]"
+echo " [6] Exit"
 echo
 
 read -rp "Select method: " choice
@@ -98,11 +139,18 @@ case "$choice" in
         ;;
 
     4)
+    read -rp "Width: " WIDTH
+    read -rp "Height: " HEIGHT
+
+    auto_resize "$WIDTH" "$HEIGHT"
+    ;;
+    
+    5)
         echo "Install REJOIN"
         sleep 2
         curl -sL https://raw.githubusercontent.com/KUYKUBZ/nefrejoin/refs/heads/main/rejoin.sh | bash
         ;;
-    5)
+    6)
         exit 0
         ;;
     *)
