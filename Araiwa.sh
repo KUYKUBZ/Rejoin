@@ -106,7 +106,7 @@ read -r choice
                 -p "$package"
             fi
 
-            sleep 20
+            sleep 2
           fi
         done
 
