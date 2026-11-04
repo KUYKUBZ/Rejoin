@@ -11,7 +11,18 @@ get_packages() {
 
 # Check if app process is running
 has_task() {
-    pidof "$1" >/dev/null 2>&1
+    local pkg="$1"
+
+    pidof "$pkg" >/dev/null 2>&1 && return 0
+
+    ps -A 2>/dev/null | awk -v p="$pkg" '
+    NR > 1 {
+        name = $NF
+        sub(/:.*/, "", name)
+        if (name == p) found = 1
+    }
+    END { exit !found }
+    '
 }
 
 while true; do
