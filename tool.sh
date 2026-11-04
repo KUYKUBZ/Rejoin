@@ -143,6 +143,9 @@ case "$choice" in
     read -rp "Height: " HEIGHT
 
     auto_resize "$WIDTH" "$HEIGHT"
+    sleep 1
+    clear
+    tool.sh
     ;;
     
     5)
