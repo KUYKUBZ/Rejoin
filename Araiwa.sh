@@ -101,28 +101,42 @@ read -r choice
         sleep 20
       done
 
-      while true; do
-        for package in $packages; do
-          if has_task "$package"; then
-            :
-          else
-            echo "[Task Not Found] Reopening $package"
+      declare -A last_open
 
-            if [ -n "$url" ]; then
-              am start -a android.intent.action.VIEW \
-                -d "$url" -p "$package"
+while true; do
+    for package in $packages; do
+
+        if ! has_task "$package"; then
+            echo "[CHECK] $package not detected"
+            sleep 8
+
+            # ตรวจซ้ำก่อนเปิด
+            if ! has_task "$package"; then
+                now=$(date +%s)
+                last=${last_open[$package]:-0}
+
+                # ป้องกันเปิดซ้ำภายใน 30 วินาที
+                if (( now - last >= 30 )); then
+                    echo "[REOPEN] $package"
+
+                    if [ -n "$url" ]; then
+                        am start -a android.intent.action.VIEW \
+                            -d "$url" -p "$package"
+                    else
+                        monkey -p "$package" 1
+                    fi
+
+                    last_open[$package]=$now
+                fi
             else
-              am start -a android.intent.action.MAIN \
-                -c android.intent.category.LAUNCHER \
-                -p "$package"
+                echo "[OK] $package is running"
             fi
+        fi
 
-            sleep 2
-          fi
-        done
+    done
 
-        sleep 5
-      done
+    sleep 5
+done
       ;;
 
     2)
