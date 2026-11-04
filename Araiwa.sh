@@ -9,10 +9,9 @@ get_packages() {
   pm list packages | grep -Ei 'roblox|delt' | sed 's/package://'
 }
 
-# Check if package has a Task
+# Check if app process is running
 has_task() {
-  /system/bin/dumpsys activity recents |
-    grep -F "A=$1 " >/dev/null
+    pidof "$1" >/dev/null 2>&1
 }
 
 while true; do
