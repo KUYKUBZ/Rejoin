@@ -1,5 +1,6 @@
 ก่อนรัน
 ```lua
+termux-change-repo
 pkg update && pkg upgrade -y
 ```
 # Araiwa
